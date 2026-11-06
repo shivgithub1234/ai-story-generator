@@ -100,3 +100,44 @@ def test_legacy_endpoint_cannot_bypass_limits_by_default(signed_in, monkeypatch)
         response = client.post("/api/stories/generate", json=REQUEST.model_dump())
     assert response.status_code == 410
     assert response.json()["detail"]["code"] == "use_saved_generation"
+
+
+def test_admin_reset_preserves_history_other_users_and_active_limits(engine, monkeypatch):
+    monkeypatch.setenv("STORY_REQUESTS_PER_24H", "1")
+    monkeypatch.setenv("STORY_MAX_ACTIVE_JOBS", "1")
+    a = test_storage.user_store(engine)
+    b = StoryStore(engine, resolve_user(engine, Identity("https://test.invalid", "other")).id)
+    story, run, _ = a.start(REQUEST, queued=True)
+    b.start(REQUEST, queued=True)
+    with Session(engine) as session:
+        original_time = session.get(WorkflowRun, run).started_at
+    reset = a.reset_usage()
+    assert reset["remaining"] == 1
+    assert reset["active_jobs"] == 1
+    assert b.usage()["remaining"] == 0
+    with pytest.raises(UsageLimitExceeded) as error:
+        a.start(REQUEST, queued=True)
+    assert error.value.code == "active_job_limit"
+    with engine.begin() as c:
+        c.execute(update(WorkflowRun).where(WorkflowRun.id == run).values(status="failed"))
+    a.start(story_id=story, queued=True)
+    assert a.usage()["remaining"] == 0
+    with Session(engine) as session:
+        assert session.get(WorkflowRun, run).started_at == original_time
+        assert session.get(StoryProject, story) is not None
+
+
+def test_schema_three_migration_keeps_existing_user(engine):
+    from sqlalchemy import text
+
+    from story_api.database import migrate
+    from story_api.storage import AppUser
+
+    owner = test_storage.user_store(engine).owner_id
+    with engine.begin() as c:
+        c.execute(text("ALTER TABLE app_users DROP COLUMN usage_reset_at"))
+        c.execute(text("DELETE FROM story_schema_version WHERE version = 4"))
+    migrate(engine)
+    migrate(engine)
+    with Session(engine) as session:
+        assert session.get(AppUser, owner).usage_reset_at is None

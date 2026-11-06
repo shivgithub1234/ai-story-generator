@@ -74,7 +74,14 @@ def migrate(engine):
                 )
             connection.execute(text("UPDATE workflow_runs SET stage = status WHERE NOT background"))
             connection.execute(text("INSERT INTO story_schema_version (version) VALUES (3)"))
-        elif version != 3:
+            version = 3
+        if version == 3:
+            connection.execute(
+                text("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS usage_reset_at TIMESTAMPTZ")
+            )
+            connection.execute(text("INSERT INTO story_schema_version (version) VALUES (4)"))
+            version = 4
+        if version != 4:
             raise DatabaseConfigurationError("Unsupported database schema version.")
         connection.execute(
             text(
@@ -89,7 +96,7 @@ if __name__ == "__main__":
     try:
         migrate(get_engine())
         print(
-            "Database schema ready (version 3). Legacy stories remain unassigned and inaccessible."
+            "Database schema ready (version 4). Legacy stories remain unassigned and inaccessible."
         )
     except Exception:
         raise SystemExit("Database initialization failed. Check DATABASE_URL and database access.")
