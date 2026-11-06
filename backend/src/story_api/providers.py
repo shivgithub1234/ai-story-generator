@@ -178,6 +178,8 @@ class DemoProvider:
                 ],
             )
             return ModelResult(outline)
+        if schema is not Script:
+            raise ValueError("Unsupported demo output schema")
         outline = Outline.model_validate(payload["outline"])
         script = Script(
             title=outline.title,
@@ -205,6 +207,12 @@ class DemoProvider:
                 ),
             ],
         )
+        if "previous_script" in payload:
+            script.scenes[
+                0
+            ].narration += (
+                " The departure bell rang as she noticed the train number on the envelope."
+            )
         return ModelResult(script)
 
     async def close(self) -> None:

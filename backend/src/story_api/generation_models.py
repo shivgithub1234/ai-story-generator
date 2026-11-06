@@ -42,7 +42,7 @@ class Script(StructuredModel):
 
 
 class StepUsage(BaseModel):
-    step: Literal["planner", "writer", "evaluator"]
+    step: Literal["planner", "writer", "evaluator", "revision", "final_evaluator"]
     elapsed_ms: int
     input_tokens: int | None = None
     output_tokens: int | None = None
@@ -83,9 +83,14 @@ class GenerationResponse(BaseModel):
     model: str
     is_demo: bool
     prompt_version: str
+    revision_prompt_version: str
     outline: Outline
     script: Script
     evaluation: EvaluationReport
+    initial_script: Script
+    initial_evaluation: EvaluationReport
+    revision_count: Literal[0, 1]
+    stop_reason: Literal["quality_passed", "revision_limit_reached"]
     final_text: str
     usage: list[StepUsage]
     warnings: list[str]
