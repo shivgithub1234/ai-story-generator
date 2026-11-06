@@ -1,0 +1,71 @@
+name: story-studio
+
+x-backend: &backend
+  image: story-studio-backend:${RELEASE_TAG:-local}
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  environment: &backend-env
+    STORY_ENV: ${STORY_ENV:-production}
+    DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in the deployment env file}
+    STORY_PROVIDER: ${STORY_PROVIDER:-gemini}
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    GEMINI_MODEL: ${GEMINI_MODEL:-}
+    AUTH_ISSUER: ${AUTH_ISSUER:?Set AUTH_ISSUER}
+    AUTH_AUDIENCE: ${AUTH_AUDIENCE:-story-api}
+    AUTH_JWKS_URL: ${AUTH_JWKS_URL:?Set AUTH_JWKS_URL}
+    AUTH_AUTHORIZED_PARTIES: ${AUTH_AUTHORIZED_PARTIES:?Set the exact frontend origin}
+    STORY_REQUESTS_PER_24H: ${STORY_REQUESTS_PER_24H:-10}
+    STORY_MAX_ACTIVE_JOBS: ${STORY_MAX_ACTIVE_JOBS:-2}
+    STORY_ENABLE_UNMETERED_DEV_ENDPOINT: "false"
+  init: true
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  migrate:
+    <<: *backend
+    command: ["sh", "-c", "python -m story_api.preflight && python -m story_api.database"]
+    restart: "no"
+  api:
+    <<: *backend
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
+  worker:
+    <<: *backend
+    command: ["python", "-m", "story_api.worker"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  frontend:
+    image: story-studio-frontend:${RELEASE_TAG:-local}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        STORY_ENV: ${STORY_ENV:-production}
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?Set the public Clerk key before building}
+    environment:
+      STORY_API_URL: http://api:8000
+    ports:
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
+    init: true
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 8s
+      retries: 3

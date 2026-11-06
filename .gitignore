@@ -11,6 +11,7 @@ htmlcov/
 !.env.example
 node_modules/
 .next/
+*.tsbuildinfo
 dist/
 .DS_Store
 Thumbs.db

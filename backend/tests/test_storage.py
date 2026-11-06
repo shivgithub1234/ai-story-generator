@@ -1,5 +1,6 @@
 """Real PostgreSQL tests. Each test owns a uniquely named schema, never existing tables."""
 
+import asyncio
 import os
 from datetime import timedelta
 from unittest.mock import AsyncMock
@@ -11,15 +12,23 @@ from sqlalchemy import create_engine, func, select, text, update
 from sqlalchemy.orm import Session
 
 from story_api import main
+from story_api.auth import Identity, resolve_user
 from story_api.database import migrate
+from story_api.jobs import JobQueue
 from story_api.providers import DemoProvider, GenerationError
 from story_api.saved_routes import get_store
 from story_api.storage import Evaluation, StoryDraft, StoryStore, WorkflowRun, now
+from story_api.worker import process_one
 
 REQUEST = {
     "premise": "A detective finds a letter predicting a mysterious theft.",
     "genre": "mystery",
 }
+
+
+def user_store(engine):
+    user = resolve_user(engine, Identity("https://test.invalid", "storage-test-user"))
+    return StoryStore(engine, user.id)
 
 
 @pytest.fixture
@@ -45,7 +54,7 @@ def engine():
 @pytest.fixture
 def client(engine, monkeypatch):
     monkeypatch.setattr(main, "create_provider", DemoProvider)
-    main.app.dependency_overrides[get_store] = lambda: StoryStore(engine)
+    main.app.dependency_overrides[get_store] = lambda: user_store(engine)
     try:
         with TestClient(main.app) as client:
             yield client
@@ -55,13 +64,16 @@ def client(engine, monkeypatch):
 
 def test_save_reopen_and_retain_both_drafts_and_evaluations(client, engine):
     response = client.post("/api/stories", json=REQUEST)
-    assert response.status_code == 201, response.text
+    assert response.status_code == 202, response.text
     saved = response.json()
+    assert saved["latest_run"]["status"] == "queued"
+    asyncio.run(process_one(JobQueue(engine), DemoProvider))
+    saved = client.get(f"/api/stories/{saved['id']}").json()
     assert saved["latest_run"]["status"] == "completed"
     assert saved["latest_run"]["id"] == saved["latest_run"]["output"]["run_id"]
     # Discard pooled connections, then read through a new repository instance.
     engine.dispose()
-    reopened = StoryStore(engine).get(saved["id"])
+    reopened = user_store(engine).get(saved["id"])
     assert reopened["latest_run"]["output"] == saved["latest_run"]["output"]
     with Session(engine) as session:
         assert session.scalar(select(func.count()).select_from(StoryDraft)) == 2
@@ -69,8 +81,9 @@ def test_save_reopen_and_retain_both_drafts_and_evaluations(client, engine):
     assert client.get("/api/stories").json()[0]["id"] == saved["id"]
 
 
-def test_new_runs_preserve_history_and_edits_are_versioned(client):
+def test_new_runs_preserve_history_and_edits_are_versioned(client, engine):
     story = client.post("/api/stories", json=REQUEST).json()
+    asyncio.run(process_one(JobQueue(engine), DemoProvider))
     path = f"/api/stories/{story['id']}"
     changed = client.patch(
         path,
@@ -84,7 +97,7 @@ def test_new_runs_preserve_history_and_edits_are_versioned(client):
     assert changed.json()["version"] == 2
     assert changed.json()["edits_evaluated"] is False
     assert client.patch(path, json={"expected_version": 1, "title": "Stale"}).status_code == 409
-    assert client.post(path + "/runs").status_code == 201
+    assert client.post(path + "/runs").status_code == 202
     runs = client.get(path + "/runs").json()
     assert len(runs) == 2
     assert len({run["id"] for run in runs}) == 2
@@ -92,17 +105,16 @@ def test_new_runs_preserve_history_and_edits_are_versioned(client):
     assert len(client.get(path + "/runs?limit=1&offset=1").json()) == 1
 
 
-def test_model_failure_is_saved_with_safe_error_code(client, monkeypatch):
+def test_model_failure_is_saved_with_safe_error_code(client, engine):
     provider = DemoProvider()
-    provider.generate = AsyncMock(side_effect=GenerationError("provider_timeout", "Timed out", 504))
+    provider.generate = AsyncMock(side_effect=GenerationError("provider_error", "Private", 502))
     provider.close = AsyncMock()
-    monkeypatch.setattr(main, "create_provider", lambda: provider)
     response = client.post("/api/stories", json=REQUEST)
-    assert response.status_code == 504
-    detail = response.json()["detail"]
-    story = client.get(f"/api/stories/{detail['story_id']}").json()
+    assert response.status_code == 202
+    asyncio.run(process_one(JobQueue(engine), lambda: provider))
+    story = client.get(f"/api/stories/{response.json()['id']}").json()
     assert story["latest_run"]["status"] == "failed"
-    assert story["latest_run"]["error_code"] == "provider_timeout"
+    assert story["latest_run"]["error_code"] == "provider_error"
     assert story["latest_run"]["output"] is None
     provider.close.assert_awaited_once()
 
@@ -110,7 +122,7 @@ def test_model_failure_is_saved_with_safe_error_code(client, monkeypatch):
 def test_interrupted_run_is_expired_on_read(client, engine):
     from story_api.schemas import StoryRequest
 
-    story_id, run_id, _ = StoryStore(engine).start(StoryRequest(**REQUEST))
+    story_id, run_id, _ = user_store(engine).start(StoryRequest(**REQUEST))
     with engine.begin() as connection:
         connection.execute(
             update(WorkflowRun)
@@ -142,8 +154,8 @@ def test_atomic_completion_rollback(client, engine, monkeypatch):
 
     event.listen(Evaluation, "before_insert", reject_report)
     try:
-        with pytest.raises(RuntimeError, match="simulated"):
-            client.post("/api/stories", json=REQUEST)
+        client.post("/api/stories", json=REQUEST)
+        asyncio.run(process_one(JobQueue(engine), DemoProvider))
     finally:
         event.remove(Evaluation, "before_insert", reject_report)
     with Session(engine) as session:

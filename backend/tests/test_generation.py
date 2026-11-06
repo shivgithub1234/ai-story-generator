@@ -9,12 +9,13 @@ from fastapi.testclient import TestClient
 from google.genai import errors, types
 
 from story_api import main, providers
-from story_api.generation_models import Assessment, Outline
+from story_api.generation_models import Assessment, Outline, Script
 from story_api.providers import DemoProvider, GeminiProvider, GenerationError
 from story_api.schemas import StoryRequest
 from story_api.workflow import generate_story
 
 REQUEST = {"premise": "A detective finds a letter predicting tomorrow's crime.", "genre": "mystery"}
+pytestmark = pytest.mark.usefixtures("signed_in")
 
 
 @pytest.fixture(autouse=True)
@@ -145,6 +146,27 @@ def test_gemini_validates_output_and_reports_usage(gemini):
     assert config.system_instruction == "Planner instructions"
 
 
+def test_writer_provider_schema_keeps_application_array_limit(gemini):
+    provider, call = gemini
+    outline = asyncio.run(DemoProvider().generate("", {}, Outline)).value
+    script = asyncio.run(
+        DemoProvider().generate("", {"outline": outline.model_dump()}, Script)
+    ).value
+    script.scenes[0].dialogue *= 61
+    call.return_value = SimpleNamespace(
+        candidates=[SimpleNamespace(finish_reason=types.FinishReason.STOP)],
+        text=script.model_dump_json(),
+    )
+    with pytest.raises(GenerationError) as error:
+        asyncio.run(provider.generate("", {}, Script))
+    assert error.value.code == "invalid_model_output"
+    sent = call.call_args.kwargs["config"].response_json_schema
+    dialogue = sent["$defs"]["Scene"]["properties"]["dialogue"]
+    assert "maxItems" not in dialogue
+    assert "60" in dialogue["description"]
+    assert Script.model_json_schema()["$defs"]["Scene"]["properties"]["dialogue"]["maxItems"] == 60
+
+
 @pytest.mark.parametrize("text", ["not json", "{}", '{"title": "Missing fields"}'])
 def test_gemini_malformed_output_is_rejected(gemini, text):
     provider, call = gemini
@@ -173,6 +195,8 @@ def test_gemini_incomplete_output_is_rejected(gemini, reason):
         (httpx.ConnectError("private upstream details"), 503),
         (errors.APIError(429, {"error": {"message": "private upstream details"}}), 429),
         (errors.APIError(403, {"error": {"message": "private upstream details"}}), 502),
+        (errors.APIError(404, {"error": {"message": "private upstream details"}}), 502),
+        (errors.APIError(504, {"error": {"message": "private upstream details"}}), 504),
     ],
 )
 def test_provider_failures_return_safe_errors(gemini, exception, status):

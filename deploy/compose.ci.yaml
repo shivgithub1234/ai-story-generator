@@ -1,0 +1,17 @@
+# Disposable database for CI only; do not use this override with real credentials.
+services:
+  database:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_USER: story_ci
+      POSTGRES_PASSWORD: ci-only-password
+      POSTGRES_DB: story_ci
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U story_ci -d story_ci"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  migrate:
+    depends_on:
+      database:
+        condition: service_healthy

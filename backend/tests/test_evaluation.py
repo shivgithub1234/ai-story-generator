@@ -10,6 +10,8 @@ from story_api.evaluation import DIMENSIONS, build_report
 from story_api.generation_models import Assessment
 from story_api.providers import DemoProvider, GenerationError
 
+pytestmark = pytest.mark.usefixtures("signed_in")
+
 
 def sample_assessment():
     return asyncio.run(DemoProvider().generate("", {}, Assessment)).value

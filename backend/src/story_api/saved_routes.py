@@ -1,13 +1,13 @@
 """Saved-story API; the original generation endpoint remains stateless."""
 
-import asyncio
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from starlette.concurrency import run_in_threadpool
 
+from story_api.auth import User, current_user
 from story_api.database import get_engine
 from story_api.schemas import StoryRequest
 from story_api.storage import StoryStore
@@ -15,8 +15,8 @@ from story_api.storage import StoryStore
 router = APIRouter(prefix="/api/stories", tags=["saved stories"])
 
 
-def get_store():
-    return StoryStore(get_engine())
+def get_store(user: Annotated[User, Depends(current_user)]):
+    return StoryStore(get_engine(), user.id)
 
 
 Store = Annotated[StoryStore, Depends(get_store)]
@@ -42,46 +42,21 @@ class StoryEdit(BaseModel):
         return self
 
 
-async def run_saved(store, *, request=None, story_id=None):
-    # Reuse the exact generation service, including timeout and provider cleanup.
-    from story_api.main import create_story
-
-    story_id, run_id, request = await run_in_threadpool(store.start, request, story_id)
-    try:
-        result = await create_story(request)
-        await run_in_threadpool(store.finish, run_id, result)
-    except HTTPException as exc:
-        code = (
-            exc.detail.get("code", "generation_failed")
-            if isinstance(exc.detail, dict)
-            else "generation_failed"
-        )
-        await run_in_threadpool(store.fail, run_id, code)
-        raise HTTPException(
-            exc.status_code,
-            detail={
-                "story_id": story_id,
-                "run_id": run_id,
-                "error": exc.detail,
-            },
-        ) from exc
-    except asyncio.CancelledError:
-        await asyncio.shield(run_in_threadpool(store.fail, run_id, "run_cancelled"))
-        raise
-    except Exception:
-        await run_in_threadpool(store.fail, run_id, "generation_failed")
-        raise
-    return await run_in_threadpool(store.get, story_id)
-
-
-@router.post("", status_code=201)
+@router.post("", status_code=202)
 async def save_new_story(request: StoryRequest, store: Store):
-    return await run_saved(store, request=request)
+    story_id, _, _ = await run_in_threadpool(store.start, request, queued=True)
+    return await run_in_threadpool(store.get, story_id)
 
 
 @router.get("")
 def list_stories(store: Store, limit: PageSize = 20, offset: Offset = 0):
     return store.list(limit, offset)
+
+
+@router.get("/usage")
+def get_usage(store: Store, response: Response):
+    response.headers["Cache-Control"] = "private, no-store"
+    return store.usage()
 
 
 @router.get("/{story_id}")
@@ -94,10 +69,11 @@ def get_runs(story_id: UUID, store: Store, limit: PageSize = 20, offset: Offset 
     return store.runs(str(story_id), limit, offset)
 
 
-@router.post("/{story_id}/runs", status_code=201)
+@router.post("/{story_id}/runs", status_code=202)
 async def regenerate(story_id: UUID, store: Store):
     """Start a new run from the saved original request, not from manual edits."""
-    return await run_saved(store, story_id=str(story_id))
+    await run_in_threadpool(store.start, story_id=str(story_id), queued=True)
+    return await run_in_threadpool(store.get, str(story_id))
 
 
 @router.patch("/{story_id}")

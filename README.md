@@ -2,7 +2,15 @@
 
 A portfolio project being built in working stages. The planned application turns a story premise into an outline, a scene-based script, and a rubric-based quality report, with at most one automatic revision per run.
 
-**Current milestone: Stage 5 — PostgreSQL persistence.** FastAPI runs a LangGraph Planner → Writer → Evaluator workflow with Google Gemini, followed by at most one rewrite and final evaluation when needed. Saved-story endpoints retain projects, runs, drafts, evaluations, and manual edits in PostgreSQL. The default offline demo uses fixed sample stories and scores and requires no API key. The frontend is not implemented yet.
+**Current milestone: Stage 8c — deployment preparation.** FastAPI runs a LangGraph Planner → Writer → Evaluator workflow with Google Gemini, followed by at most one rewrite and final evaluation when needed. Saved-story endpoints retain projects, runs, drafts, evaluations, and manual edits in PostgreSQL. Saved stories are private to their verified owners. Demo mode uses fixed sample stories and scores and needs no Gemini key, but still requires sign-in. The Next.js frontend provides Clerk sign-in, a personal library, generation, feedback, manual editing, downloads, and run history. Saved generation now queues a job and returns immediately; a separate worker records progress and saves the output. The default per-user allowance is 10 requests per rolling 24 hours and 2 active jobs. See the [background jobs walkthrough](docs/stage-08-background-jobs.md) and [usage limits walkthrough](docs/stage-08-user-limits.md).
+
+## Deployment preparation
+
+Container definitions, a Compose stack, production configuration checks, `/ready`, and GitHub Actions are prepared. See the [deployment runbook](docs/stage-08-deployment.md) for secrets, build/start commands, worker scaling, and rollback. Linux CI has verified Docker/Compose startup and a completed background demo job. Hosted verification is still pending; this is not a public deployment.
+
+## Authentication setup
+
+Configure Clerk and apply schema version 3 using the [Stage 6 walkthrough](docs/stage-06-auth-ownership.md). Generation and saved-story endpoints now require a valid bearer token, including demo mode. Use `/api/auth/me` to confirm your local account ID. Existing ownerless stories remain inaccessible until explicitly assigned by an administrator. Use your own Clerk instance and keep credentials in local environment files.
 
 ## Run locally on Windows
 
@@ -22,6 +30,10 @@ Set `$env:PYTHONUTF8 = '1'` in each new PowerShell terminal before using this en
 
 On macOS/Linux, create the environment with `python3.12 -m venv .venv` and replace `.\.venv\Scripts\python.exe` with `.venv/bin/python` in the commands above.
 
+## Open the frontend
+
+Start a worker in a separate terminal using the commands in the [Stage 8 guide](docs/stage-08-background-jobs.md). With the backend and worker running, configure `frontend/.env.local` as described in the [Stage 7 setup guide](docs/stage-07-frontend.md), then run `npm ci` and `npm run dev` from `frontend/`. Open http://localhost:3000 to sign in and create stories. Node.js 22 is required for the frontend.
+
 ## Try a story request
 
 In `/docs`, expand `POST /api/story-requests/validate`, choose **Try it out**, paste this JSON, and choose **Execute**:
@@ -38,7 +50,7 @@ In `/docs`, expand `POST /api/story-requests/validate`, choose **Try it out**, p
 
 A valid request returns HTTP 200 with normalized input. Invalid input returns HTTP 422 with field-specific details. This endpoint only validates; it does not call an AI model or persist data.
 
-Submit the same JSON to **`POST /api/stories/generate`** to run the Planner → Writer → Evaluator graph. The response includes the outline, script, readable text, evaluation, prompt version, timing, and token usage when available. By default, `is_demo` is true: the story and scores are fixed samples that ignore your preferences, not AI-generated results.
+Submit the same JSON to **`POST /api/stories`** with a valid Authorization bearer token to queue the Planner → Writer → Evaluator graph. Fetch `GET /api/stories/{id}` to read the completed result. The response includes the outline, script, readable text, evaluation, prompt version, timing, and token usage when available. By default, `is_demo` is true: the story and scores are fixed samples that ignore your preferences, not AI-generated results.
 
 The judge scores coherence, character consistency, repetition avoidance, language quality, and instruction adherence from 1–10, with scene evidence and revision suggestions. Python computes the average and flags an average below 7.0 or any individual dimension below 4 with `needs_revision`. This triggers one feedback-based rewrite and a final evaluation. The workflow then stops even if quality remains below the rule. See the [Stage 4 walkthrough](docs/stage-04-feedback-revision.md).
 
@@ -46,7 +58,7 @@ The judge scores coherence, character consistency, repetition avoidance, languag
 
 For live Gemini generation, copy `.env.example` to `.env` once and set `STORY_PROVIDER=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` locally. Use a model available in your account that supports structured JSON. Restart the server after configuration changes. See the [Stage 2 walkthrough](docs/stage-02-planner-writer.md) for setup and response explanations. Never commit your `.env` file.
 
-To save results, configure `DATABASE_URL` and initialize PostgreSQL using the [Stage 5 setup guide](docs/stage-05-persistence.md). Submit the same request to `POST /api/stories`, then use `GET /api/stories/{id}` to reopen it and `GET /api/stories/{id}/runs` to inspect history. The existing `/generate` endpoint remains stateless and works without a database. `PATCH /api/stories/{id}` saves separate manual edits using `expected_version` to prevent lost updates.
+To save results, configure `DATABASE_URL` and initialize PostgreSQL using the [Stage 5 setup guide](docs/stage-05-persistence.md). Submit the same request to `POST /api/stories`, then use `GET /api/stories/{id}` to reopen it and `GET /api/stories/{id}/runs` to inspect history. The legacy `/generate` endpoint is disabled by default to prevent unmetered generation; its explicit local-development switch is described in the usage guide. `PATCH /api/stories/{id}` saves separate manual edits using `expected_version` to prevent lost updates.
 
 Initial supported genres: mystery, fantasy, science-fiction, drama, comedy, horror. Languages: English and Hindi. Premises must contain 10–2,000 characters after trimming, and target length must be an integer from 200–3,000 words. Target length will be approximate during generation.
 
@@ -69,9 +81,13 @@ backend/
   src/story_api/schemas.py   Typed input and response contracts
   src/story_api/workflow.py  LangGraph Planner → Writer → Evaluator
   src/story_api/evaluation.py  Aggregate score and revision recommendation
+  src/story_api/auth.py      Clerk bearer-token verification and local identity
+  src/story_api/assign_legacy.py  Explicit admin assignment for ownerless stories
   src/story_api/database.py  Engine configuration and versioned schema initialization
   src/story_api/storage.py   PostgreSQL models and transactional persistence
   src/story_api/saved_routes.py Saved project and run endpoints
+  src/story_api/jobs.py      PostgreSQL job claims, leases, progress, retries
+  src/story_api/worker.py    Separate background generation process
   src/story_api/providers.py Gemini adapter and explicit offline demo
   src/story_api/prompts.py   Versioned agent instructions
   src/story_api/generation_models.py  Outline and script schemas
@@ -79,22 +95,29 @@ backend/
   tests/test_generation.py   Workflow and provider failure tests
   tests/test_evaluation.py   Rubric validation and threshold tests
   tests/test_revision.py     Conditional rewrite and limit tests
+  tests/test_auth.py         Signed JWT and protected-route tests
+  tests/test_ownership.py    Cross-user access and migration tests
   tests/test_storage.py      Real PostgreSQL integration tests (opt-in)
+frontend/                   Next.js Story Studio UI and restricted API proxy
+  tests/proxy.test.ts       Request forwarding and security-boundary tests
 docs/
   stage-01-foundation.md     Explanation and GitHub checkpoint
   stage-02-planner-writer.md Generation workflow walkthrough
   stage-03-evaluator.md      Judge and scoring walkthrough
   stage-04-feedback-revision.md  Bounded rewrite walkthrough
   stage-05-persistence.md    Database setup and saved-story walkthrough
+  stage-06-auth-ownership.md Clerk setup, ownership, and legacy migration
+  stage-07-frontend.md      Frontend setup, design, auth flow, and checks
+  stage-08-background-jobs.md Durable jobs, recovery, progress, and worker setup
   evaluation-cases.json      Repeatable manual review prompts
   roadmap.md                Planned milestones
 ```
 
 ## Architecture and planned extensions
 
-Implemented: FastAPI → LangGraph Planner → Writer → Evaluator → optional single rewrite → final evaluation, with a Gemini provider adapter and PostgreSQL persistence. Next, a Next.js UI will provide editing and review. An optional MCP interface will reuse the same application services.
+Implemented: FastAPI → LangGraph Planner → Writer → Evaluator → optional single rewrite → final evaluation, with a Gemini provider adapter and PostgreSQL persistence. The Next.js UI now provides Clerk sign-in, a personal dashboard, editing, and review. An optional MCP interface will reuse the same application services.
 
-The synchronous HTTP workflow is bounded by a 330-second deadline and makes three model calls, or five when revision is needed. Saved-story endpoints persist completed results; `/generate` does not. This development API has no authentication or public rate limiting; run it on localhost. Model tests use fixtures/mocks and do not require paid calls. PostgreSQL tests require `STORY_TEST_DATABASE_URL` and otherwise skip explicitly. Live Gemini output quality must be checked separately with your own configured account. Judge scores are subjective estimates; cited scene numbers are validated but the accuracy of evidence is not automatically verified.
+Each workflow attempt has a 330-second deadline and makes three model calls, or five when revision is needed. Saved-story POST endpoints return 202 with a queued run; a worker persists results and GET requests expose progress. `/generate` is disabled by default. Background recovery restarts the workflow, with at most three attempts. This API verifies Clerk tokens and enforces ownership, and enforces per-user generation allowances; per-IP abuse controls and deployment hardening are still pending, so keep development on localhost. Model tests use fixtures/mocks and do not require paid calls. PostgreSQL tests require `STORY_TEST_DATABASE_URL` and otherwise skip explicitly. Live Gemini output quality must be checked separately with your own configured account. Judge scores are subjective estimates; cited scene numbers are validated but the accuracy of evidence is not automatically verified.
 
 See [the roadmap](docs/roadmap.md) and [Stage 1 walkthrough](docs/stage-01-foundation.md). Audio/video generation and self-hosted model serving are outside the initial scope.
 

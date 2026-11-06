@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "story-generator-api"
-version = "0.5.0"
+version = "0.8.0"
 description = "API for an iterative AI Story Generator and Evaluator project"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.28,<1",
     "sqlalchemy>=2.0,<3",
     "psycopg[binary]>=3.2,<4",
+    "PyJWT[crypto]>=2.15.1,<3",
 ]
 
 [project.optional-dependencies]
