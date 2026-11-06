@@ -1,0 +1,178 @@
+"""Provider adapter. Demo data is explicit and never a fallback for Gemini errors."""
+
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol, TypeVar
+
+import httpx
+from dotenv import load_dotenv
+from google import genai
+from google.genai import errors, types
+from pydantic import BaseModel, ValidationError
+
+from story_api.generation_models import Character, Dialogue, Outline, Scene, Script
+
+T = TypeVar("T", bound=BaseModel)
+
+
+class GenerationError(Exception):
+    def __init__(self, code: str, message: str, status: int = 502):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+
+
+@dataclass
+class ModelResult:
+    value: BaseModel
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+class Provider(Protocol):
+    name: str
+    model: str
+
+    async def generate(self, instructions: str, payload: dict, schema: type[T]) -> ModelResult: ...
+    async def close(self) -> None: ...
+
+
+class GeminiProvider:
+    name = "gemini"
+
+    def __init__(self, api_key: str, model: str):
+        self.model = model
+        self.client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=60000,
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        )
+
+    async def generate(self, instructions: str, payload: dict, schema: type[T]) -> ModelResult:
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model,
+                contents=json.dumps(payload, ensure_ascii=False),
+                config=types.GenerateContentConfig(
+                    system_instruction=instructions,
+                    response_mime_type="application/json",
+                    response_json_schema=schema.model_json_schema(),
+                    max_output_tokens=12000,
+                ),
+            )
+        except (httpx.TimeoutException, TimeoutError) as exc:
+            raise GenerationError("provider_timeout", "Gemini timed out. Try again.", 504) from exc
+        except errors.APIError as exc:
+            if exc.code == 429:
+                raise GenerationError(
+                    "provider_rate_limit",
+                    "Gemini quota or rate limit reached. Try later.",
+                    429,
+                ) from exc
+            raise GenerationError(
+                "provider_error",
+                "Gemini request failed. Check your API key and model configuration.",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise GenerationError("provider_unavailable", "Cannot reach Gemini.", 503) from exc
+
+        candidates = response.candidates or []
+        if not candidates or candidates[0].finish_reason != types.FinishReason.STOP:
+            raise GenerationError(
+                "incomplete_output",
+                "Gemini blocked or did not finish the output. Try a different request.",
+            )
+        try:
+            value = schema.model_validate_json(response.text or "")
+        except ValidationError as exc:
+            raise GenerationError(
+                "invalid_model_output",
+                "Gemini returned output that did not match the expected structure.",
+            ) from exc
+        usage = response.usage_metadata
+        return ModelResult(
+            value=value,
+            input_tokens=usage.prompt_token_count if usage else None,
+            output_tokens=usage.candidates_token_count if usage else None,
+        )
+
+    async def close(self) -> None:
+        await self.client.aio.aclose()
+        self.client.close()
+
+
+class DemoProvider:
+    name = "demo"
+    model = "fixed-fixture-v1"
+
+    async def generate(self, instructions: str, payload: dict, schema: type[T]) -> ModelResult:
+        if schema is Outline:
+            outline = Outline(
+                title="Demo: The Letter at Dawn",
+                setting="A fictional railway station at dawn.",
+                conflict="A missing letter must reach its owner before the last train departs.",
+                characters=[
+                    Character(name="Mira", goal="Return the letter", traits="Curious and honest")
+                ],
+                scene_beats=[
+                    "Mira discovers a misplaced letter.",
+                    "She follows a clue to the departing train.",
+                    "She returns the letter and resolves the misunderstanding.",
+                ],
+            )
+            return ModelResult(outline)
+        outline = Outline.model_validate(payload["outline"])
+        script = Script(
+            title=outline.title,
+            scenes=[
+                Scene(
+                    heading="Discovery",
+                    narration="Mira found a letter beneath the station bench.",
+                    dialogue=[Dialogue(speaker="Mira", text="Someone must be waiting for this.")],
+                ),
+                Scene(
+                    heading="The clue",
+                    narration="The envelope bore the number of the departing train.",
+                    dialogue=[
+                        Dialogue(speaker="Mira", text="There is still time to reach the platform.")
+                    ],
+                ),
+                Scene(
+                    heading="Return",
+                    narration="Mira handed the letter to its owner before the whistle.",
+                    dialogue=[
+                        Dialogue(
+                            speaker="Mira", text="Your message has finally found its way home."
+                        )
+                    ],
+                ),
+            ],
+        )
+        return ModelResult(script)
+
+    async def close(self) -> None:
+        pass
+
+
+def create_provider() -> Provider:
+    # Explicit path avoids accidentally loading a .env from an unrelated parent project.
+    load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+    name = os.getenv("STORY_PROVIDER", "demo").strip().lower()
+    if name == "demo":
+        return DemoProvider()
+    if name != "gemini":
+        raise GenerationError("configuration_error", "STORY_PROVIDER must be demo or gemini.", 503)
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    model = os.getenv("GEMINI_MODEL", "").strip()
+    if not key or not model:
+        raise GenerationError(
+            "configuration_error",
+            "Set GEMINI_API_KEY and GEMINI_MODEL in your local .env file.",
+            503,
+        )
+    return GeminiProvider(key, model)
