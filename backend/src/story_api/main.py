@@ -2,24 +2,35 @@
 
 import asyncio
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from story_api.auth import router as auth_router
 from story_api.auth import verified_identity
-from story_api.database import DatabaseConfigurationError
+from story_api.database import DatabaseConfigurationError, get_engine
 from story_api.generation_models import GenerationResponse
 from story_api.limits import UsageConfigurationError, UsageLimitExceeded
+from story_api.preflight import validate_runtime
 from story_api.providers import GenerationError, create_provider
 from story_api.saved_routes import router as saved_router
 from story_api.schemas import HealthResponse, StoryRequest, ValidationResponse
 from story_api.storage import EditConflict, MissingStory, RunExpired
 from story_api.workflow import generate_story
 
+
+@asynccontextmanager
+async def lifespan(app):
+    validate_runtime()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="AI Story Generator & Evaluator",
     version="0.8.0",
     description=(
@@ -33,6 +44,24 @@ app = FastAPI(
 def health() -> HealthResponse:
     """Report whether the API process can respond; no external services are checked."""
     return HealthResponse()
+
+
+@app.get("/ready", tags=["health"])
+def ready():
+    """Database/schema readiness only; this does not prove worker or Gemini health."""
+    try:
+        with get_engine().connect() as connection:
+            connection.execute(text("SET LOCAL statement_timeout = '3000ms'"))
+            version = connection.execute(
+                text("SELECT max(version) FROM story_schema_version")
+            ).scalar()
+            if version != 3:
+                raise DatabaseConfigurationError("Schema migration required")
+    except (SQLAlchemyError, DatabaseConfigurationError):
+        return JSONResponse(
+            status_code=503, content={"status": "not_ready"}, headers={"Cache-Control": "no-store"}
+        )
+    return JSONResponse(content={"status": "ready"}, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/story-requests/validate", response_model=ValidationResponse, tags=["stories"])

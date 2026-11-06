@@ -1,0 +1,64 @@
+name: Verify application and containers
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: story_ci
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: story_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U story_ci -d story_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      STORY_TEST_DATABASE_URL: postgresql+psycopg://story_ci:ci-only-password@localhost:5432/story_ci
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: pip install -r backend/requirements-dev.lock
+      - run: python -m ruff check backend
+      - run: python -m ruff format --check backend
+      - run: python -m pytest backend/tests -q
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      STORY_ENV: development
+      STORY_PROVIDER: demo
+      DATABASE_URL: postgresql+psycopg://story_ci:ci-only-password@database:5432/story_ci
+      AUTH_ISSUER: https://ci.invalid
+      AUTH_JWKS_URL: https://ci.invalid/.well-known/jwks.json
+      AUTH_AUTHORIZED_PARTIES: http://localhost:3000
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
+      COMPOSE_FILE: compose.yaml:deploy/compose.ci.yaml
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker compose config --quiet
+      - run: docker compose up --build -d frontend worker
+      - run: curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:3000/
+      - run: docker compose exec -T api python - < scripts/container_smoke.py
+      - if: always()
+        run: docker compose logs --tail=100
+      - if: always()
+        run: docker compose down -v

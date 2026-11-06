@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
+import signal
 
 from starlette.concurrency import run_in_threadpool
 
 from story_api.database import get_engine
 from story_api.jobs import JobQueue
+from story_api.preflight import validate_runtime
 from story_api.providers import GenerationError, create_provider
 from story_api.storage import RunExpired, StoryStore
 from story_api.workflow import generate_story
@@ -73,6 +75,14 @@ async def process_one(queue, provider_factory=create_provider):
 
 
 async def serve():
+    validate_runtime()
+    # Containers send SIGTERM. Cancel cleanly and let the saved lease recover the job.
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    try:
+        loop.add_signal_handler(signal.SIGTERM, task.cancel)
+    except NotImplementedError:
+        pass  # Windows' event loop uses Ctrl+C instead.
     queue = JobQueue(get_engine())
     log.info("Worker started; waiting for queued stories")
     while True:
@@ -88,5 +98,5 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     try:
         asyncio.run(serve())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         pass

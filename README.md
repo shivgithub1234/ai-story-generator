@@ -2,7 +2,11 @@
 
 A portfolio project being built in working stages. The planned application turns a story premise into an outline, a scene-based script, and a rubric-based quality report, with at most one automatic revision per run.
 
-**Current milestone: Stage 8b — per-user usage limits.** FastAPI runs a LangGraph Planner → Writer → Evaluator workflow with Google Gemini, followed by at most one rewrite and final evaluation when needed. Saved-story endpoints retain projects, runs, drafts, evaluations, and manual edits in PostgreSQL. Saved stories are private to their verified owners. Demo mode uses fixed sample stories and scores and needs no Gemini key, but still requires sign-in. The Next.js frontend provides Clerk sign-in, a personal library, generation, feedback, manual editing, downloads, and run history. Saved generation now queues a job and returns immediately; a separate worker records progress and saves the output. The default per-user allowance is 10 requests per rolling 24 hours and 2 active jobs. See the [background jobs walkthrough](docs/stage-08-background-jobs.md) and [usage limits walkthrough](docs/stage-08-user-limits.md).
+**Current milestone: Stage 8c — deployment preparation.** FastAPI runs a LangGraph Planner → Writer → Evaluator workflow with Google Gemini, followed by at most one rewrite and final evaluation when needed. Saved-story endpoints retain projects, runs, drafts, evaluations, and manual edits in PostgreSQL. Saved stories are private to their verified owners. Demo mode uses fixed sample stories and scores and needs no Gemini key, but still requires sign-in. The Next.js frontend provides Clerk sign-in, a personal library, generation, feedback, manual editing, downloads, and run history. Saved generation now queues a job and returns immediately; a separate worker records progress and saves the output. The default per-user allowance is 10 requests per rolling 24 hours and 2 active jobs. See the [background jobs walkthrough](docs/stage-08-background-jobs.md) and [usage limits walkthrough](docs/stage-08-user-limits.md).
+
+## Deployment preparation
+
+Container definitions, a Compose stack, production configuration checks, `/ready`, and GitHub Actions are prepared. See the [deployment runbook](docs/stage-08-deployment.md) for secrets, build/start commands, worker scaling, and rollback. Docker/Compose execution and hosted verification are still pending; this is not a public deployment.
 
 ## Authentication setup
 
