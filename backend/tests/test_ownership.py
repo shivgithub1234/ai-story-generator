@@ -36,7 +36,7 @@ def test_two_users_cannot_read_edit_or_regenerate_each_others_stories(clients, p
     alice, bob = clients
     a = alice.post("/api/stories", json=REQUEST)
     b = bob.post("/api/stories", json=REQUEST)
-    assert a.status_code == b.status_code == 201
+    assert a.status_code == b.status_code == 202
     a_id, b_id = a.json()["id"], b.json()["id"]
     assert [s["id"] for s in alice.get("/api/stories").json()] == [a_id]
     assert [s["id"] for s in bob.get("/api/stories").json()] == [b_id]

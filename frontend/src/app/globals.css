@@ -1309,3 +1309,34 @@ summary {
     transition: none !important;
   }
 }
+
+.job-progress {
+  border: 1px solid #d9ddd4;
+  border-radius: 18px;
+  padding: 24px;
+  margin: 24px 0;
+  background: #f1f5ed;
+}
+.job-progress > p:first-child {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 600;
+}
+.job-progress ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding-left: 22px;
+}
+.job-progress li {
+  color: #66715f;
+  font-size: 13px;
+  padding: 4px;
+}
+.job-progress li.current {
+  color: #244629;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}

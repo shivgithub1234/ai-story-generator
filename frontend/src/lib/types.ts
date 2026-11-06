@@ -54,7 +54,10 @@ export type Output = {
 };
 export type Run = {
   id: string;
-  status: "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed";
+  stage: string;
+  attempt: number;
+  available_at: string | null;
   started_at: string;
   error_code: string | null;
   output: Output | null;

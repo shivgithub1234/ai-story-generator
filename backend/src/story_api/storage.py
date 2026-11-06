@@ -3,7 +3,17 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, select, update
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -48,6 +58,11 @@ class WorkflowRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     output: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    background: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    stage: Mapped[str] = mapped_column(String(30), default="queued", server_default="queued")
+    attempt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class StoryDraft(Base):
@@ -100,7 +115,9 @@ class StoryStore:
     def _owned_ids(self):
         return select(StoryProject.id).where(StoryProject.owner_id == self.owner_id)
 
-    def start(self, request: StoryRequest | None = None, story_id: str | None = None):
+    def start(
+        self, request: StoryRequest | None = None, story_id: str | None = None, *, queued=False
+    ):
         with Session(self.engine) as session, session.begin():
             if story_id is None:
                 story_id = str(uuid4())
@@ -115,19 +132,33 @@ class StoryStore:
                 session.flush()
             else:
                 story = self._owned_story(session, story_id)
+                # Serialize enqueue requests for the same project. Reuse its active job.
+                session.refresh(story, with_for_update=True)
                 request = StoryRequest.model_validate(story.request)
+                if queued:
+                    active = session.scalar(
+                        select(WorkflowRun).where(
+                            WorkflowRun.story_id == story_id,
+                            WorkflowRun.status.in_(["queued", "running"]),
+                            WorkflowRun.background.is_(True),
+                        )
+                    )
+                    if active:
+                        return story_id, active.id, request
             run_id = str(uuid4())
             session.add(
                 WorkflowRun(
                     id=run_id,
                     story_id=story_id,
-                    status="running",
+                    status="queued" if queued else "running",
+                    background=queued,
+                    available_at=now() if queued else None,
                     expires_at=now() + timedelta(minutes=10),
                 )
             )
         return story_id, run_id, request
 
-    def finish(self, run_id: str, result: GenerationResponse):
+    def finish(self, run_id: str, result: GenerationResponse, *, lease_token=None):
         with Session(self.engine) as session, session.begin():
             run = session.scalar(
                 select(WorkflowRun)
@@ -137,7 +168,12 @@ class StoryStore:
                 )
                 .with_for_update()
             )
-            if run is None or run.status != "running" or run.expires_at <= now():
+            if (
+                run is None
+                or run.status != "running"
+                or run.expires_at <= now()
+                or (run.background and run.lease_token != lease_token)
+            ):
                 raise RunExpired()
             output = result.model_copy(update={"run_id": run_id}).model_dump(mode="json")
             drafts = [(result.initial_script, result.initial_evaluation)]
@@ -159,6 +195,8 @@ class StoryStore:
                     Evaluation(id=str(uuid4()), draft_id=draft_id, report=report.model_dump())
                 )
             run.status = "completed"
+            run.stage = "completed"
+            run.lease_token = None
             run.completed_at = now()
             run.output = output
 
@@ -179,6 +217,7 @@ class StoryStore:
             update(WorkflowRun)
             .where(
                 WorkflowRun.status == "running",
+                WorkflowRun.background.is_(False),
                 WorkflowRun.expires_at < now(),
                 WorkflowRun.story_id.in_(self._owned_ids()),
             )
@@ -193,6 +232,9 @@ class StoryStore:
             "started_at": run.started_at,
             "completed_at": run.completed_at,
             "error_code": run.error_code,
+            "stage": run.stage,
+            "attempt": run.attempt,
+            "available_at": run.available_at,
         }
         if include_output:
             data["output"] = run.output

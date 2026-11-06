@@ -1,5 +1,6 @@
 """A bounded graph: plan, write, judge, optionally revise once and judge again."""
 
+from collections.abc import Awaitable, Callable
 from time import perf_counter
 from typing import TypedDict
 from uuid import uuid4
@@ -38,8 +39,13 @@ class StoryState(TypedDict, total=False):
     usage: list[StepUsage]
 
 
-def build_graph(provider: Provider):
+def build_graph(provider: Provider, progress: Callable[[str], Awaitable[None]] | None = None):
+    async def report_progress(stage):
+        if progress is not None:
+            await progress(stage)
+
     async def planner(state: StoryState) -> dict:
+        await report_progress("planning")
         start = perf_counter()
         result = await provider.generate(PLANNER, {"request": state["request"]}, Outline)
         outline = Outline.model_validate(result.value)
@@ -61,6 +67,7 @@ def build_graph(provider: Provider):
         }
 
     async def write_script(state: StoryState, *, revising: bool = False) -> dict:
+        await report_progress("revising" if revising else "writing")
         start = perf_counter()
         outline = state["outline"]
         payload = {"request": state["request"], "outline": outline.model_dump()}
@@ -104,6 +111,7 @@ def build_graph(provider: Provider):
         return await write_script(state, revising=True)
 
     async def evaluator(state: StoryState) -> dict:
+        await report_progress("final_evaluation" if state["revision_count"] else "evaluating")
         start = perf_counter()
         result = await provider.generate(
             EVALUATOR,
@@ -157,8 +165,13 @@ def build_graph(provider: Provider):
     return graph.compile()
 
 
-async def generate_story(request: StoryRequest, provider: Provider) -> GenerationResponse:
-    state = await build_graph(provider).ainvoke({"request": request.model_dump()})
+async def generate_story(
+    request: StoryRequest,
+    provider: Provider,
+    *,
+    progress: Callable[[str], Awaitable[None]] | None = None,
+) -> GenerationResponse:
+    state = await build_graph(provider, progress).ainvoke({"request": request.model_dump()})
     script = state["script"]
     sections = [script.title]
     for number, scene in enumerate(script.scenes, 1):

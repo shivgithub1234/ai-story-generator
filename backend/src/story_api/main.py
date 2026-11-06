@@ -18,9 +18,9 @@ from story_api.workflow import generate_story
 
 app = FastAPI(
     title="AI Story Generator & Evaluator",
-    version="0.6.0",
+    version="0.8.0",
     description=(
-        "Stage 6: verified bearer authentication and private user-owned stories. "
+        "Stage 8: durable background jobs, progress, and private user-owned stories. "
         "Generation and saved-story operations require sign-in."
     ),
 )

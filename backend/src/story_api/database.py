@@ -46,7 +46,8 @@ def migrate(engine):
         version = connection.execute(text("SELECT max(version) FROM story_schema_version")).scalar()
         if version is None:
             storage.Base.metadata.create_all(connection)
-            connection.execute(text("INSERT INTO story_schema_version (version) VALUES (2)"))
+            connection.execute(text("INSERT INTO story_schema_version (version) VALUES (3)"))
+            version = 3
         elif version == 1:
             storage.AppUser.__table__.create(connection)
             connection.execute(
@@ -59,15 +60,36 @@ def migrate(engine):
                 text("CREATE INDEX ix_story_projects_owner_id ON story_projects(owner_id)")
             )
             connection.execute(text("INSERT INTO story_schema_version (version) VALUES (2)"))
-        elif version != 2:
+            version = 2
+        if version == 2:
+            for definition in (
+                "background BOOLEAN NOT NULL DEFAULT false",
+                "stage VARCHAR(30) NOT NULL DEFAULT 'queued'",
+                "attempt INTEGER NOT NULL DEFAULT 0",
+                "lease_token VARCHAR(36)",
+                "available_at TIMESTAMPTZ",
+            ):
+                connection.execute(
+                    text(f"ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS {definition}")
+                )
+            connection.execute(text("UPDATE workflow_runs SET stage = status WHERE NOT background"))
+            connection.execute(text("INSERT INTO story_schema_version (version) VALUES (3)"))
+        elif version != 3:
             raise DatabaseConfigurationError("Unsupported database schema version.")
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_workflow_queue "
+                "ON workflow_runs (available_at, started_at) "
+                "WHERE background AND status IN ('queued', 'running')"
+            )
+        )
 
 
 if __name__ == "__main__":
     try:
         migrate(get_engine())
         print(
-            "Database schema ready (version 2). Legacy stories remain unassigned and inaccessible."
+            "Database schema ready (version 3). Legacy stories remain unassigned and inaccessible."
         )
     except Exception:
         raise SystemExit("Database initialization failed. Check DATABASE_URL and database access.")

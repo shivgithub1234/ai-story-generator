@@ -9,6 +9,8 @@ import {
   type Story,
 } from "@/lib/types";
 
+import RunProgress from "./run-progress";
+
 type Requester = <T>(path: string, options?: RequestInit) => Promise<T>;
 type Props = {
   story: Story;
@@ -39,6 +41,10 @@ export default function StoryReader({
   const [text, setText] = useState(
     story.edited_text ?? story.latest_run?.output?.final_text ?? "",
   );
+  const [pollError, setPollError] = useState("");
+  const active =
+    story.latest_run?.status === "queued" ||
+    story.latest_run?.status === "running";
   const run = historical ?? story.latest_run;
   const output = run?.output;
   const dirty =
@@ -75,7 +81,55 @@ export default function StoryReader({
         if (!controller.signal.aborted) setHistoryLoading(false);
       });
     return () => controller.abort();
-  }, [request, story.id, story.latest_run?.id, historyPage]);
+  }, [
+    request,
+    story.id,
+    story.latest_run?.id,
+    story.latest_run?.status,
+    historyPage,
+  ]);
+
+  useEffect(() => {
+    if (!active) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
+    async function poll() {
+      let keepPolling = true;
+      try {
+        const updated = await request<Story>(`stories/${story.id}`, {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        failures = 0;
+        setPollError("");
+        keepPolling =
+          updated.latest_run?.status === "queued" ||
+          updated.latest_run?.status === "running";
+        setTitle(updated.title);
+        setText(
+          updated.edited_text ?? updated.latest_run?.output?.final_text ?? "",
+        );
+        onChange(updated);
+      } catch {
+        if (controller.signal.aborted) return;
+        failures += 1;
+        setPollError(
+          "Progress connection interrupted. Retrying automatically; your saved job is unaffected.",
+        );
+      }
+      if (keepPolling && !controller.signal.aborted)
+        timer = setTimeout(
+          poll,
+          Math.min(30000, 2000 * 2 ** Math.min(failures, 4)),
+        );
+    }
+    timer = setTimeout(poll, 1000);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [active, request, story.id, onChange]);
 
   async function regenerate() {
     if (
@@ -94,6 +148,7 @@ export default function StoryReader({
         method: "POST",
       });
       onChange(updated);
+      setTitle(updated.title);
       setText(
         updated.edited_text ?? updated.latest_run?.output?.final_text ?? "",
       );
@@ -190,7 +245,11 @@ export default function StoryReader({
         <button className="secondary" disabled={busy} onClick={reload}>
           Reload story
         </button>
-        <button className="primary" disabled={busy} onClick={regenerate}>
+        <button
+          className="primary"
+          disabled={busy || active}
+          onClick={regenerate}
+        >
           {busy ? "Working…" : "Generate a new version ↗"}
         </button>
       </div>
@@ -200,8 +259,7 @@ export default function StoryReader({
       </p>
       {busy ? (
         <p role="status" className="progress-panel">
-          <span className="spinner" /> Saving or generating your story. Please
-          keep this page open.
+          <span className="spinner" /> Saving your request…
         </p>
       ) : null}
       {error ? (
@@ -228,11 +286,14 @@ export default function StoryReader({
           This run could not finish ({run.error_code || "generation failed"}).
           You can generate a new version, or open an earlier result in History.
         </div>
-      ) : run?.status === "running" ? (
-        <div className="notice">
-          This run is still marked as running. Use Reload story to check its
-          status. Interrupted runs expire after ten minutes.
-        </div>
+      ) : null}
+      {active && story.latest_run ? (
+        <RunProgress run={story.latest_run} />
+      ) : null}
+      {pollError && active ? (
+        <p role="status" className="notice">
+          {pollError}
+        </p>
       ) : null}
       <div className="reader-tabs" role="tablist" aria-label="Story views">
         {["story", "feedback", "outline", "edit", "history"].map((name) => (
@@ -318,7 +379,11 @@ export default function StoryReader({
           ) : (
             <div className="empty-state">
               <h2>No completed draft yet.</h2>
-              <p>Generate a new version or check the run history.</p>
+              <p>
+                {active
+                  ? "Your story is being prepared. Progress updates automatically."
+                  : "Generate a new version or check the run history."}
+              </p>
             </div>
           )
         ) : tab === "feedback" ? (
@@ -382,7 +447,7 @@ export default function StoryReader({
               required
               maxLength={300}
               onChange={(e) => setTitle(e.target.value)}
-              disabled={busy}
+              disabled={busy || active}
             />
             <label htmlFor="story-text">Your manuscript</label>
             <textarea
@@ -393,11 +458,11 @@ export default function StoryReader({
               maxLength={100000}
               rows={22}
               onChange={(e) => setText(e.target.value)}
-              disabled={busy}
+              disabled={busy || active}
             />
             <button
               className="primary"
-              disabled={busy || !title.trim() || !text.trim()}
+              disabled={busy || active || !title.trim() || !text.trim()}
             >
               Save my edits
             </button>
@@ -420,7 +485,7 @@ export default function StoryReader({
                   key={r.id}
                   className="history-row"
                   onClick={() => {
-                    setHistorical(r);
+                    setHistorical(r.id === story.latest_run?.id ? null : r);
                     setTab("story");
                   }}
                 >

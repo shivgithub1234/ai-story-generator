@@ -1,5 +1,7 @@
 # Stage 7 — Story Studio frontend
 
+Stage 8 changes saved generation to queued jobs and adds a required worker process. For the current startup and API behavior, see [Stage 8](stage-08-background-jobs.md). The notes below describe the original Stage 7 checkpoint.
+
 This stage gives the existing FastAPI application a Next.js interface. The frontend is developed locally on `codex/stage-7-frontend`, based on Stage 6. Stage 6 is already pushed; this stage is a separate, reviewable checkpoint.
 
 ## What you can do

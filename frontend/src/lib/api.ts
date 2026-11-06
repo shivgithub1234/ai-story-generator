@@ -52,3 +52,25 @@ export async function api<T>(
     );
   return body as T;
 }
+
+export async function sessionApi<T>(
+  path: string,
+  getToken: (options?: { skipCache?: boolean }) => Promise<string | null>,
+  options: RequestInit = {},
+): Promise<T> {
+  try {
+    return await api<T>(path, await getToken(), options);
+  } catch (error) {
+    // A cached short-lived token can expire during a refresh/network change.
+    // Retry reads once with a fresh token; never replay story mutations here.
+    if (
+      error instanceof ApiError &&
+      error.status === 401 &&
+      (options.method ?? "GET") === "GET" &&
+      !options.signal?.aborted
+    ) {
+      return api<T>(path, await getToken({ skipCache: true }), options);
+    }
+    throw error;
+  }
+}

@@ -9,7 +9,7 @@ import {
   useUser,
 } from "@clerk/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError } from "@/lib/api";
+import { sessionApi, ApiError } from "@/lib/api";
 import type { Story, StoryInput, StorySummary } from "@/lib/types";
 import StoryReader from "./story-reader";
 
@@ -137,9 +137,39 @@ function Workspace() {
   const openRequest = useRef(0);
   const request = useCallback(
     async <T,>(path: string, options?: RequestInit) =>
-      api<T>(path, await getToken(), options),
+      sessionApi<T>(path, getToken, options),
     [getToken],
   );
+
+  const updateStory = useCallback((story: Story) => {
+    setError("");
+    setSelected(story);
+  }, []);
+
+  useEffect(() => {
+    const id = new URL(window.location.href).searchParams.get("story");
+    if (!id || !/^[0-9a-f-]{36}$/i.test(id)) return;
+    const controller = new AbortController();
+    const sequence = ++openRequest.current;
+    setView("story");
+    setOpening(true);
+    request<Story>(`stories/${id}`, { signal: controller.signal })
+      .then((story) => {
+        if (!controller.signal.aborted && sequence === openRequest.current)
+          setSelected(story);
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted && sequence === openRequest.current)
+          setError(
+            err instanceof Error ? err.message : "Could not open story.",
+          );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && sequence === openRequest.current)
+          setOpening(false);
+      });
+    return () => controller.abort();
+  }, [request]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -187,7 +217,10 @@ function Workspace() {
     setSelected(null);
     try {
       const story = await request<Story>(`stories/${id}`);
-      if (sequence === openRequest.current) setSelected(story);
+      if (sequence === openRequest.current) {
+        setSelected(story);
+        window.history.replaceState(null, "", `/?story=${story.id}`);
+      }
     } catch (err) {
       if (sequence === openRequest.current)
         setError(err instanceof Error ? err.message : "Could not open story.");
@@ -214,6 +247,7 @@ function Workspace() {
         body: JSON.stringify(body),
       });
       setSelected(story);
+      window.history.replaceState(null, "", `/?story=${story.id}`);
       setView("story");
       setPage(0);
       setRefresh((v) => v + 1);
@@ -247,6 +281,8 @@ function Workspace() {
     setOpening(false);
     setError("");
     setView(next);
+    window.history.replaceState(null, "", "/");
+    if (next === "library") setRefresh((v) => v + 1);
   }
 
   return (
@@ -465,9 +501,8 @@ function Workspace() {
                   </div>
                   {busy ? (
                     <div className="progress-panel" role="status">
-                      <span className="spinner" /> Planning, writing, and
-                      evaluating your story. This can take a few minutes; keep
-                      this page open.
+                      <span className="spinner" /> Saving your request. Once
+                      queued, you can leave this page.
                     </div>
                   ) : null}
                 </form>
@@ -639,11 +674,7 @@ function Workspace() {
               busy={busy}
               setBusy={setBusy}
               onDirtyChange={setDirty}
-              onChange={(story) => {
-                setError("");
-                setSelected(story);
-                setRefresh((v) => v + 1);
-              }}
+              onChange={updateStory}
             />
           ) : (
             <div className="empty-state">

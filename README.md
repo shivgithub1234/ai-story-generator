@@ -2,11 +2,11 @@
 
 A portfolio project being built in working stages. The planned application turns a story premise into an outline, a scene-based script, and a rubric-based quality report, with at most one automatic revision per run.
 
-**Current milestone: Stage 7 — Story Studio frontend.** FastAPI runs a LangGraph Planner → Writer → Evaluator workflow with Google Gemini, followed by at most one rewrite and final evaluation when needed. Saved-story endpoints retain projects, runs, drafts, evaluations, and manual edits in PostgreSQL. Saved stories are private to their verified owners. Demo mode uses fixed sample stories and scores and needs no Gemini key, but still requires sign-in. The Next.js frontend provides Clerk sign-in, a personal library, generation, feedback, manual editing, downloads, and run history. See the [Stage 7 walkthrough](docs/stage-07-frontend.md).
+**Current milestone: Stage 8 — durable background jobs and progress tracking.** FastAPI runs a LangGraph Planner → Writer → Evaluator workflow with Google Gemini, followed by at most one rewrite and final evaluation when needed. Saved-story endpoints retain projects, runs, drafts, evaluations, and manual edits in PostgreSQL. Saved stories are private to their verified owners. Demo mode uses fixed sample stories and scores and needs no Gemini key, but still requires sign-in. The Next.js frontend provides Clerk sign-in, a personal library, generation, feedback, manual editing, downloads, and run history. Saved generation now queues a job and returns immediately; a separate worker records progress and saves the output. See the [Stage 8 walkthrough](docs/stage-08-background-jobs.md).
 
 ## Authentication setup
 
-Configure Clerk and apply schema version 2 using the [Stage 6 walkthrough](docs/stage-06-auth-ownership.md). Generation and saved-story endpoints now require a valid bearer token, including demo mode. Use `/api/auth/me` to confirm your local account ID. Existing ownerless stories remain inaccessible until explicitly assigned by an administrator. Use your own Clerk instance and keep credentials in local environment files.
+Configure Clerk and apply schema version 3 using the [Stage 6 walkthrough](docs/stage-06-auth-ownership.md). Generation and saved-story endpoints now require a valid bearer token, including demo mode. Use `/api/auth/me` to confirm your local account ID. Existing ownerless stories remain inaccessible until explicitly assigned by an administrator. Use your own Clerk instance and keep credentials in local environment files.
 
 ## Run locally on Windows
 
@@ -28,7 +28,7 @@ On macOS/Linux, create the environment with `python3.12 -m venv .venv` and repla
 
 ## Open the frontend
 
-With the backend running, follow the [Stage 7 setup guide](docs/stage-07-frontend.md), configure `frontend/.env.local`, then run `npm ci` and `npm run dev` from `frontend/`. Open http://localhost:3000 to sign in and create stories. Node.js 22 is required for the frontend.
+Start a worker in a separate terminal using the commands in the [Stage 8 guide](docs/stage-08-background-jobs.md). With the backend and worker running, configure `frontend/.env.local` as described in the [Stage 7 setup guide](docs/stage-07-frontend.md), then run `npm ci` and `npm run dev` from `frontend/`. Open http://localhost:3000 to sign in and create stories. Node.js 22 is required for the frontend.
 
 ## Try a story request
 
@@ -82,6 +82,8 @@ backend/
   src/story_api/database.py  Engine configuration and versioned schema initialization
   src/story_api/storage.py   PostgreSQL models and transactional persistence
   src/story_api/saved_routes.py Saved project and run endpoints
+  src/story_api/jobs.py      PostgreSQL job claims, leases, progress, retries
+  src/story_api/worker.py    Separate background generation process
   src/story_api/providers.py Gemini adapter and explicit offline demo
   src/story_api/prompts.py   Versioned agent instructions
   src/story_api/generation_models.py  Outline and script schemas
@@ -102,6 +104,7 @@ docs/
   stage-05-persistence.md    Database setup and saved-story walkthrough
   stage-06-auth-ownership.md Clerk setup, ownership, and legacy migration
   stage-07-frontend.md      Frontend setup, design, auth flow, and checks
+  stage-08-background-jobs.md Durable jobs, recovery, progress, and worker setup
   evaluation-cases.json      Repeatable manual review prompts
   roadmap.md                Planned milestones
 ```
@@ -110,7 +113,7 @@ docs/
 
 Implemented: FastAPI → LangGraph Planner → Writer → Evaluator → optional single rewrite → final evaluation, with a Gemini provider adapter and PostgreSQL persistence. The Next.js UI now provides Clerk sign-in, a personal dashboard, editing, and review. An optional MCP interface will reuse the same application services.
 
-The synchronous HTTP workflow is bounded by a 330-second deadline and makes three model calls, or five when revision is needed. Saved-story endpoints persist completed results; `/generate` does not. This API verifies Clerk tokens and enforces ownership, but public rate limiting is not implemented; keep development on localhost. Model tests use fixtures/mocks and do not require paid calls. PostgreSQL tests require `STORY_TEST_DATABASE_URL` and otherwise skip explicitly. Live Gemini output quality must be checked separately with your own configured account. Judge scores are subjective estimates; cited scene numbers are validated but the accuracy of evidence is not automatically verified.
+Each workflow attempt has a 330-second deadline and makes three model calls, or five when revision is needed. Saved-story POST endpoints return 202 with a queued run; a worker persists results and GET requests expose progress. `/generate` remains synchronous and stateless. Background recovery restarts the workflow, with at most three attempts. This API verifies Clerk tokens and enforces ownership, but public rate limiting is not implemented; keep development on localhost. Model tests use fixtures/mocks and do not require paid calls. PostgreSQL tests require `STORY_TEST_DATABASE_URL` and otherwise skip explicitly. Live Gemini output quality must be checked separately with your own configured account. Judge scores are subjective estimates; cited scene numbers are validated but the accuracy of evidence is not automatically verified.
 
 See [the roadmap](docs/roadmap.md) and [Stage 1 walkthrough](docs/stage-01-foundation.md). Audio/video generation and self-hosted model serving are outside the initial scope.
 
