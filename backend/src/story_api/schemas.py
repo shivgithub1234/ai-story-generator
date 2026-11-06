@@ -26,4 +26,4 @@ class ValidationResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
-    version: str = "0.2.0"
+    version: str = "0.3.0"

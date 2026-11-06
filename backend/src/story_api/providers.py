@@ -12,7 +12,15 @@ from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
-from story_api.generation_models import Character, Dialogue, Outline, Scene, Script
+from story_api.generation_models import (
+    Assessment,
+    Character,
+    Dialogue,
+    DimensionRating,
+    Outline,
+    Scene,
+    Script,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -111,6 +119,50 @@ class DemoProvider:
     model = "fixed-fixture-v1"
 
     async def generate(self, instructions: str, payload: dict, schema: type[T]) -> ModelResult:
+        if schema is Assessment:
+            # Fixed sample scores demonstrate the contract, not quality measurement.
+            def rating(score: int, explanation: str, evidence: str) -> DimensionRating:
+                return DimensionRating(
+                    score=score,
+                    explanation=explanation,
+                    evidence=evidence,
+                    scene_numbers=[1, 2, 3],
+                )
+
+            return ModelResult(
+                Assessment(
+                    narrative_coherence=rating(
+                        7,
+                        "A simple complete sequence.",
+                        "Mira finds a letter, follows the train number, and returns it.",
+                    ),
+                    character_consistency=rating(
+                        8,
+                        "Mira keeps her goal throughout.",
+                        "All three scenes show Mira trying to return the letter.",
+                    ),
+                    repetition_avoidance=rating(
+                        8,
+                        "Each scene moves the sample forward.",
+                        "Discovery, pursuit, and return cover different events.",
+                    ),
+                    language_quality=rating(
+                        7,
+                        "The fixed English sample is readable.",
+                        "Short sentences describe the letter and the train.",
+                    ),
+                    instruction_adherence=rating(
+                        2,
+                        "The fixture ignores user preferences.",
+                        "The fixed letter story does not adapt to the requested premise or length.",
+                    ),
+                    summary="Fixed demonstration assessment only, not an LLM judgment.",
+                    revision_suggestions=[
+                        "Write a story matching the requested premise and language.",
+                        "Expand the scenes toward the requested length.",
+                    ],
+                )
+            )
         if schema is Outline:
             outline = Outline(
                 title="Demo: The Letter at Dawn",
