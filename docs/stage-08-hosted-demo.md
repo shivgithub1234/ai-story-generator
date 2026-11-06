@@ -34,3 +34,7 @@ Sources: https://vercel.com/docs/daemons/limits and https://vercel.com/docs/serv
 ## Verification before sharing
 
 Check the deployed page and assets, unauthenticated API rejection, Clerk sign-in, personal library, one short queued Gemini story through the hosted worker, and saved story refresh. Verify worker logs and database persistence. Do not claim success based only on a successful frontend build.
+
+## Live generation verification after account reset
+
+On November 6, 2026, schema 4 and the account-specific reset feature were deployed from `3488d24`. Only the requesting account's allowance was reset; history was preserved. The hosted UI showed 3/3 remaining, accepted a 200-word-target fantasy prompt, displayed evaluation progress, then rendered **The Star-Tender's Dawn** with a 9.0/10 evaluation and no revision recommended. The allowance dropped to 2/3 and active jobs returned to zero. The local worker was stopped, so this verifies the hosted worker path. This supersedes the earlier quota-blocked verification limitation above.

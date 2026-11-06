@@ -6,11 +6,11 @@ A portfolio project being built in working stages. The planned application turns
 
 ## Deployment preparation
 
-Container definitions, a Compose stack, production configuration checks, `/ready`, and GitHub Actions are prepared. See the [deployment runbook](docs/stage-08-deployment.md) for secrets, build/start commands, worker scaling, and rollback. Linux CI has verified Docker/Compose startup and a completed background demo job. The [portfolio demo](https://ai-story-generator-tau-ten.vercel.app) is live on Vercel Hobby with Clerk test authentication and Neon. Hosted sign-in, saved stories, and worker startup are verified; a new hosted generation is pending because the test account exhausted its rolling allowance. The hosted demo allows 3 requests per 24 hours and 1 active job per account. See [hosting verification and free-tier limits](docs/stage-08-hosted-demo.md).
+Container definitions, a Compose stack, production configuration checks, `/ready`, and GitHub Actions are prepared. See the [deployment runbook](docs/stage-08-deployment.md) for secrets, build/start commands, worker scaling, and rollback. Linux CI has verified Docker/Compose startup and a completed background demo job. The [portfolio demo](https://ai-story-generator-tau-ten.vercel.app) is live on Vercel Hobby with Clerk test authentication and Neon. Hosted sign-in, saved stories, and live Gemini generation through the cloud worker are verified. The hosted demo allows 3 requests per 24 hours and 1 active job per account. See [hosting verification and free-tier limits](docs/stage-08-hosted-demo.md).
 
 ## Authentication setup
 
-Configure Clerk and apply schema version 3 using the [Stage 6 walkthrough](docs/stage-06-auth-ownership.md). Generation and saved-story endpoints now require a valid bearer token, including demo mode. Use `/api/auth/me` to confirm your local account ID. Existing ownerless stories remain inaccessible until explicitly assigned by an administrator. Use your own Clerk instance and keep credentials in local environment files.
+Configure Clerk and apply schema version 4 using the [Stage 6 walkthrough](docs/stage-06-auth-ownership.md). Generation and saved-story endpoints now require a valid bearer token, including demo mode. Use `/api/auth/me` to confirm your local account ID. Existing ownerless stories remain inaccessible until explicitly assigned by an administrator. Use your own Clerk instance and keep credentials in local environment files.
 
 ## Run locally on Windows
 
