@@ -2,11 +2,11 @@
 
 A portfolio project being built in working stages. The planned application turns a story premise into an outline, a scene-based script, and a rubric-based quality report, with at most one automatic revision per run.
 
-**Current milestone: Stage 6 — Clerk authentication and story ownership.** FastAPI runs a LangGraph Planner → Writer → Evaluator workflow with Google Gemini, followed by at most one rewrite and final evaluation when needed. Saved-story endpoints retain projects, runs, drafts, evaluations, and manual edits in PostgreSQL. Saved stories are private to their verified owners. Demo mode uses fixed sample stories and scores and needs no Gemini key, but still requires sign-in. The frontend is not implemented yet.
+**Current milestone: Stage 7 — Story Studio frontend.** FastAPI runs a LangGraph Planner → Writer → Evaluator workflow with Google Gemini, followed by at most one rewrite and final evaluation when needed. Saved-story endpoints retain projects, runs, drafts, evaluations, and manual edits in PostgreSQL. Saved stories are private to their verified owners. Demo mode uses fixed sample stories and scores and needs no Gemini key, but still requires sign-in. The Next.js frontend provides Clerk sign-in, a personal library, generation, feedback, manual editing, downloads, and run history. See the [Stage 7 walkthrough](docs/stage-07-frontend.md).
 
 ## Authentication setup
 
-Configure Clerk and apply schema version 2 using the [Stage 6 walkthrough](docs/stage-06-auth-ownership.md). Generation and saved-story endpoints now require a valid bearer token, including demo mode. Use `/api/auth/me` to confirm your local account ID. Existing ownerless stories remain inaccessible until explicitly assigned by an administrator. No live Clerk application has been configured automatically.
+Configure Clerk and apply schema version 2 using the [Stage 6 walkthrough](docs/stage-06-auth-ownership.md). Generation and saved-story endpoints now require a valid bearer token, including demo mode. Use `/api/auth/me` to confirm your local account ID. Existing ownerless stories remain inaccessible until explicitly assigned by an administrator. Use your own Clerk instance and keep credentials in local environment files.
 
 ## Run locally on Windows
 
@@ -25,6 +25,10 @@ Open http://127.0.0.1:8000/docs for the interactive API documentation, or http:/
 Set `$env:PYTHONUTF8 = '1'` in each new PowerShell terminal before using this environment. This supports workspace paths containing non-English characters on Windows with Python 3.12.
 
 On macOS/Linux, create the environment with `python3.12 -m venv .venv` and replace `.\.venv\Scripts\python.exe` with `.venv/bin/python` in the commands above.
+
+## Open the frontend
+
+With the backend running, follow the [Stage 7 setup guide](docs/stage-07-frontend.md), configure `frontend/.env.local`, then run `npm ci` and `npm run dev` from `frontend/`. Open http://localhost:3000 to sign in and create stories. Node.js 22 is required for the frontend.
 
 ## Try a story request
 
@@ -88,6 +92,8 @@ backend/
   tests/test_auth.py         Signed JWT and protected-route tests
   tests/test_ownership.py    Cross-user access and migration tests
   tests/test_storage.py      Real PostgreSQL integration tests (opt-in)
+frontend/                   Next.js Story Studio UI and restricted API proxy
+  tests/proxy.test.ts       Request forwarding and security-boundary tests
 docs/
   stage-01-foundation.md     Explanation and GitHub checkpoint
   stage-02-planner-writer.md Generation workflow walkthrough
@@ -95,13 +101,14 @@ docs/
   stage-04-feedback-revision.md  Bounded rewrite walkthrough
   stage-05-persistence.md    Database setup and saved-story walkthrough
   stage-06-auth-ownership.md Clerk setup, ownership, and legacy migration
+  stage-07-frontend.md      Frontend setup, design, auth flow, and checks
   evaluation-cases.json      Repeatable manual review prompts
   roadmap.md                Planned milestones
 ```
 
 ## Architecture and planned extensions
 
-Implemented: FastAPI → LangGraph Planner → Writer → Evaluator → optional single rewrite → final evaluation, with a Gemini provider adapter and PostgreSQL persistence. Next, a Next.js UI will provide Clerk sign-in, a personal dashboard, editing, and review. An optional MCP interface will reuse the same application services.
+Implemented: FastAPI → LangGraph Planner → Writer → Evaluator → optional single rewrite → final evaluation, with a Gemini provider adapter and PostgreSQL persistence. The Next.js UI now provides Clerk sign-in, a personal dashboard, editing, and review. An optional MCP interface will reuse the same application services.
 
 The synchronous HTTP workflow is bounded by a 330-second deadline and makes three model calls, or five when revision is needed. Saved-story endpoints persist completed results; `/generate` does not. This API verifies Clerk tokens and enforces ownership, but public rate limiting is not implemented; keep development on localhost. Model tests use fixtures/mocks and do not require paid calls. PostgreSQL tests require `STORY_TEST_DATABASE_URL` and otherwise skip explicitly. Live Gemini output quality must be checked separately with your own configured account. Judge scores are subjective estimates; cited scene numbers are validated but the accuracy of evidence is not automatically verified.
 
