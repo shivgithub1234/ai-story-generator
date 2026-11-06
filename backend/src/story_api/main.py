@@ -2,10 +2,12 @@
 
 import asyncio
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from story_api.auth import router as auth_router
+from story_api.auth import verified_identity
 from story_api.database import DatabaseConfigurationError
 from story_api.generation_models import GenerationResponse
 from story_api.providers import GenerationError, create_provider
@@ -16,10 +18,10 @@ from story_api.workflow import generate_story
 
 app = FastAPI(
     title="AI Story Generator & Evaluator",
-    version="0.5.0",
+    version="0.6.0",
     description=(
-        "Stage 5: PostgreSQL projects, drafts, evaluations, and run history. "
-        "The /generate endpoint stays stateless; POST /api/stories saves results."
+        "Stage 6: verified bearer authentication and private user-owned stories. "
+        "Generation and saved-story operations require sign-in."
     ),
 )
 
@@ -36,7 +38,12 @@ def validate_story_request(request: StoryRequest) -> ValidationResponse:
     return ValidationResponse(request=request)
 
 
-@app.post("/api/stories/generate", response_model=GenerationResponse, tags=["stories"])
+@app.post(
+    "/api/stories/generate",
+    response_model=GenerationResponse,
+    tags=["stories"],
+    dependencies=[Depends(verified_identity)],
+)
 async def create_story(request: StoryRequest) -> GenerationResponse:
     """Generate synchronously within this HTTP request; results are not persisted."""
     provider = None
@@ -86,3 +93,4 @@ for exception in (
 
 # Register after /generate so it cannot be interpreted as a story UUID.
 app.include_router(saved_router)
+app.include_router(auth_router)

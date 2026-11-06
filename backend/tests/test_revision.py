@@ -11,6 +11,8 @@ from story_api.providers import DemoProvider, GenerationError, ModelResult
 from story_api.schemas import StoryRequest
 from story_api.workflow import generate_story
 
+pytestmark = pytest.mark.usefixtures("signed_in")
+
 REQUEST = StoryRequest(
     premise="A detective finds a letter predicting tomorrow's crime.", genre="mystery"
 )

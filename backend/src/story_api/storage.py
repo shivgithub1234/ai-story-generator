@@ -19,10 +19,22 @@ def now():
 class StoryProject(Base):
     __tablename__ = "story_projects"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(
+        ForeignKey("app_users.id"), index=True, nullable=True
+    )
     title: Mapped[str] = mapped_column(String(300))
     request: Mapped[dict] = mapped_column(JSONB)
     edited_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AppUser(Base):
+    __tablename__ = "app_users"
+    __table_args__ = (UniqueConstraint("issuer", "subject"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    issuer: Mapped[str] = mapped_column(String(500))
+    subject: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -68,8 +80,25 @@ class RunExpired(Exception):
 
 
 class StoryStore:
-    def __init__(self, engine):
+    def __init__(self, engine, owner_id: str):
+        if not owner_id:
+            raise ValueError("A verified owner is required")
         self.engine = engine
+        self.owner_id = owner_id
+
+    def _owned_story(self, session, story_id):
+        story = session.scalar(
+            select(StoryProject).where(
+                StoryProject.id == story_id,
+                StoryProject.owner_id == self.owner_id,
+            )
+        )
+        if story is None:
+            raise MissingStory()
+        return story
+
+    def _owned_ids(self):
+        return select(StoryProject.id).where(StoryProject.owner_id == self.owner_id)
 
     def start(self, request: StoryRequest | None = None, story_id: str | None = None):
         with Session(self.engine) as session, session.begin():
@@ -78,15 +107,14 @@ class StoryStore:
                 session.add(
                     StoryProject(
                         id=story_id,
+                        owner_id=self.owner_id,
                         title=request.premise[:300],
                         request=request.model_dump(),
                     )
                 )
                 session.flush()
             else:
-                story = session.get(StoryProject, story_id)
-                if story is None:
-                    raise MissingStory()
+                story = self._owned_story(session, story_id)
                 request = StoryRequest.model_validate(story.request)
             run_id = str(uuid4())
             session.add(
@@ -102,7 +130,12 @@ class StoryStore:
     def finish(self, run_id: str, result: GenerationResponse):
         with Session(self.engine) as session, session.begin():
             run = session.scalar(
-                select(WorkflowRun).where(WorkflowRun.id == run_id).with_for_update()
+                select(WorkflowRun)
+                .where(
+                    WorkflowRun.id == run_id,
+                    WorkflowRun.story_id.in_(self._owned_ids()),
+                )
+                .with_for_update()
             )
             if run is None or run.status != "running" or run.expires_at <= now():
                 raise RunExpired()
@@ -135,6 +168,7 @@ class StoryStore:
                 update(WorkflowRun)
                 .where(
                     WorkflowRun.id == run_id,
+                    WorkflowRun.story_id.in_(self._owned_ids()),
                     WorkflowRun.status == "running",
                 )
                 .values(status="failed", error_code=code, completed_at=now())
@@ -146,6 +180,7 @@ class StoryStore:
             .where(
                 WorkflowRun.status == "running",
                 WorkflowRun.expires_at < now(),
+                WorkflowRun.story_id.in_(self._owned_ids()),
             )
             .values(status="failed", error_code="run_interrupted", completed_at=now())
         )
@@ -166,9 +201,7 @@ class StoryStore:
     def get(self, story_id: str):
         with Session(self.engine) as session, session.begin():
             self._expire(session)
-            story = session.get(StoryProject, story_id)
-            if story is None:
-                raise MissingStory()
+            story = self._owned_story(session, story_id)
             latest = session.scalar(
                 select(WorkflowRun)
                 .where(
@@ -179,6 +212,7 @@ class StoryStore:
             )
             return {
                 "id": story.id,
+                "owner_id": story.owner_id,
                 "title": story.title,
                 "request": story.request,
                 "created_at": story.created_at,
@@ -191,8 +225,7 @@ class StoryStore:
     def runs(self, story_id: str, limit: int, offset: int):
         with Session(self.engine) as session, session.begin():
             self._expire(session)
-            if session.get(StoryProject, story_id) is None:
-                raise MissingStory()
+            self._owned_story(session, story_id)
             runs = session.scalars(
                 select(WorkflowRun)
                 .where(WorkflowRun.story_id == story_id)
@@ -206,6 +239,7 @@ class StoryStore:
         with Session(self.engine) as session:
             stories = session.scalars(
                 select(StoryProject)
+                .where(StoryProject.owner_id == self.owner_id)
                 .order_by(StoryProject.created_at.desc(), StoryProject.id.desc())
                 .limit(limit)
                 .offset(offset)
@@ -217,12 +251,12 @@ class StoryStore:
 
     def edit(self, story_id: str, expected_version: int, changes: dict):
         with Session(self.engine) as session, session.begin():
-            if session.get(StoryProject, story_id) is None:
-                raise MissingStory()
+            self._owned_story(session, story_id)
             updated = session.execute(
                 update(StoryProject)
                 .where(
                     StoryProject.id == story_id,
+                    StoryProject.owner_id == self.owner_id,
                     StoryProject.version == expected_version,
                 )
                 .values(**changes, version=expected_version + 1)

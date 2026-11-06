@@ -46,14 +46,28 @@ def migrate(engine):
         version = connection.execute(text("SELECT max(version) FROM story_schema_version")).scalar()
         if version is None:
             storage.Base.metadata.create_all(connection)
-            connection.execute(text("INSERT INTO story_schema_version (version) VALUES (1)"))
-        elif version != 1:
+            connection.execute(text("INSERT INTO story_schema_version (version) VALUES (2)"))
+        elif version == 1:
+            storage.AppUser.__table__.create(connection)
+            connection.execute(
+                text(
+                    "ALTER TABLE story_projects ADD COLUMN owner_id VARCHAR(36) "
+                    "REFERENCES app_users(id)"
+                )
+            )
+            connection.execute(
+                text("CREATE INDEX ix_story_projects_owner_id ON story_projects(owner_id)")
+            )
+            connection.execute(text("INSERT INTO story_schema_version (version) VALUES (2)"))
+        elif version != 2:
             raise DatabaseConfigurationError("Unsupported database schema version.")
 
 
 if __name__ == "__main__":
     try:
         migrate(get_engine())
-        print("Database schema is ready (version 1).")
+        print(
+            "Database schema ready (version 2). Legacy stories remain unassigned and inaccessible."
+        )
     except Exception:
         raise SystemExit("Database initialization failed. Check DATABASE_URL and database access.")

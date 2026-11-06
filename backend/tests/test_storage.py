@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, func, select, text, update
 from sqlalchemy.orm import Session
 
 from story_api import main
+from story_api.auth import Identity, resolve_user
 from story_api.database import migrate
 from story_api.providers import DemoProvider, GenerationError
 from story_api.saved_routes import get_store
@@ -20,6 +21,11 @@ REQUEST = {
     "premise": "A detective finds a letter predicting a mysterious theft.",
     "genre": "mystery",
 }
+
+
+def user_store(engine):
+    user = resolve_user(engine, Identity("https://test.invalid", "storage-test-user"))
+    return StoryStore(engine, user.id)
 
 
 @pytest.fixture
@@ -45,7 +51,7 @@ def engine():
 @pytest.fixture
 def client(engine, monkeypatch):
     monkeypatch.setattr(main, "create_provider", DemoProvider)
-    main.app.dependency_overrides[get_store] = lambda: StoryStore(engine)
+    main.app.dependency_overrides[get_store] = lambda: user_store(engine)
     try:
         with TestClient(main.app) as client:
             yield client
@@ -61,7 +67,7 @@ def test_save_reopen_and_retain_both_drafts_and_evaluations(client, engine):
     assert saved["latest_run"]["id"] == saved["latest_run"]["output"]["run_id"]
     # Discard pooled connections, then read through a new repository instance.
     engine.dispose()
-    reopened = StoryStore(engine).get(saved["id"])
+    reopened = user_store(engine).get(saved["id"])
     assert reopened["latest_run"]["output"] == saved["latest_run"]["output"]
     with Session(engine) as session:
         assert session.scalar(select(func.count()).select_from(StoryDraft)) == 2
@@ -110,7 +116,7 @@ def test_model_failure_is_saved_with_safe_error_code(client, monkeypatch):
 def test_interrupted_run_is_expired_on_read(client, engine):
     from story_api.schemas import StoryRequest
 
-    story_id, run_id, _ = StoryStore(engine).start(StoryRequest(**REQUEST))
+    story_id, run_id, _ = user_store(engine).start(StoryRequest(**REQUEST))
     with engine.begin() as connection:
         connection.execute(
             update(WorkflowRun)

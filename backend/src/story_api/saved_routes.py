@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from starlette.concurrency import run_in_threadpool
 
+from story_api.auth import User, current_user
 from story_api.database import get_engine
 from story_api.schemas import StoryRequest
 from story_api.storage import StoryStore
@@ -15,8 +16,8 @@ from story_api.storage import StoryStore
 router = APIRouter(prefix="/api/stories", tags=["saved stories"])
 
 
-def get_store():
-    return StoryStore(get_engine())
+def get_store(user: Annotated[User, Depends(current_user)]):
+    return StoryStore(get_engine(), user.id)
 
 
 Store = Annotated[StoryStore, Depends(get_store)]

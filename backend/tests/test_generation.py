@@ -15,6 +15,7 @@ from story_api.schemas import StoryRequest
 from story_api.workflow import generate_story
 
 REQUEST = {"premise": "A detective finds a letter predicting tomorrow's crime.", "genre": "mystery"}
+pytestmark = pytest.mark.usefixtures("signed_in")
 
 
 @pytest.fixture(autouse=True)
