@@ -61,7 +61,7 @@ export async function forward(
         Authorization: authorization,
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(350000),
+      signal: AbortSignal.timeout(55000),
     });
     return new Response(await response.text(), {
       status: response.status,
