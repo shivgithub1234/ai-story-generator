@@ -3,18 +3,23 @@
 import asyncio
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
+from story_api.database import DatabaseConfigurationError
 from story_api.generation_models import GenerationResponse
 from story_api.providers import GenerationError, create_provider
+from story_api.saved_routes import router as saved_router
 from story_api.schemas import HealthResponse, StoryRequest, ValidationResponse
+from story_api.storage import EditConflict, MissingStory, RunExpired
 from story_api.workflow import generate_story
 
 app = FastAPI(
     title="AI Story Generator & Evaluator",
-    version="0.4.0",
+    version="0.5.0",
     description=(
-        "Stage 4: Planner, Writer, judge, and at most one feedback-based rewrite. "
-        "Gemini and offline demo modes are supported. Results are not stored."
+        "Stage 5: PostgreSQL projects, drafts, evaluations, and run history. "
+        "The /generate endpoint stays stateless; POST /api/stories saves results."
     ),
 )
 
@@ -52,3 +57,32 @@ async def create_story(request: StoryRequest) -> GenerationResponse:
     finally:
         if provider is not None:
             await provider.close()
+
+
+async def storage_error_handler(request, exc):
+    if isinstance(exc, MissingStory):
+        status, code, message = 404, "story_not_found", "Story not found."
+    elif isinstance(exc, EditConflict):
+        status, code, message = 409, "edit_conflict", "Reload the story before saving your edits."
+    elif isinstance(exc, RunExpired):
+        status, code, message = 409, "run_expired", "This run expired; start a new run."
+    else:
+        status, code, message = (
+            503,
+            "database_unavailable",
+            "Check database configuration and run the schema initializer.",
+        )
+    return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message}})
+
+
+for exception in (
+    DatabaseConfigurationError,
+    SQLAlchemyError,
+    MissingStory,
+    EditConflict,
+    RunExpired,
+):
+    app.add_exception_handler(exception, storage_error_handler)
+
+# Register after /generate so it cannot be interpreted as a story UUID.
+app.include_router(saved_router)
