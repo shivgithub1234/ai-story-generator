@@ -21,9 +21,9 @@ class StoryRequest(BaseModel):
 class ValidationResponse(BaseModel):
     valid: Literal[True] = True
     request: StoryRequest
-    message: str = "Input is valid. Story generation will be added in Stage 2."
+    message: str = "Input is valid. Submit it to /api/stories/generate to generate a draft."
 
 
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
-    version: str = "0.1.0"
+    version: str = "0.2.0"
