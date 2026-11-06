@@ -11,10 +11,10 @@ from story_api.workflow import generate_story
 
 app = FastAPI(
     title="AI Story Generator & Evaluator",
-    version="0.2.0",
+    version="0.3.0",
     description=(
-        "Stage 2: LangGraph Planner and Writer with Gemini or explicit offline demo mode. "
-        "Evaluation, revision, and storage are planned for later stages."
+        "Stage 3: Planner, Writer, and rubric-based judge with Gemini or offline demo mode. "
+        "Automatic revision and storage are planned for later stages."
     ),
 )
 
@@ -37,7 +37,7 @@ async def create_story(request: StoryRequest) -> GenerationResponse:
     provider = None
     try:
         provider = create_provider()
-        async with asyncio.timeout(150):
+        async with asyncio.timeout(210):
             return await generate_story(request, provider)
     except GenerationError as exc:
         raise HTTPException(exc.status, detail={"code": exc.code, "message": exc.message}) from exc

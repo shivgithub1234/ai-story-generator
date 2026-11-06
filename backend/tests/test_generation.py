@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from google.genai import errors, types
 
 from story_api import main, providers
-from story_api.generation_models import Outline
+from story_api.generation_models import Assessment, Outline
 from story_api.providers import DemoProvider, GeminiProvider, GenerationError
 from story_api.schemas import StoryRequest
 from story_api.workflow import generate_story
@@ -32,7 +32,9 @@ def test_demo_runs_both_agents_and_returns_readable_script():
     body = response.json()
     assert body["is_demo"] is True
     assert body["provider"] == "demo"
-    assert [step["step"] for step in body["usage"]] == ["planner", "writer"]
+    assert [step["step"] for step in body["usage"]] == ["planner", "writer", "evaluator"]
+    assert body["evaluation"]["overall_score"] == 6.4
+    assert body["evaluation"]["needs_revision"] is True
     assert len(body["script"]["scenes"]) == len(body["outline"]["scene_beats"]) == 3
     assert body["outline"]["title"] in body["final_text"]
     assert "Mira:" in body["final_text"]
@@ -68,10 +70,12 @@ def test_writer_receives_planner_output_and_original_preferences():
     provider = RecordingProvider()
     request = StoryRequest(**REQUEST, language="Hindi", tone="Suspenseful")
     result = asyncio.run(generate_story(request, provider))
-    assert len(provider.calls) == 2
+    assert len(provider.calls) == 3
     assert provider.calls[0][0] != provider.calls[1][0]
     assert provider.calls[1][1]["outline"] == result.outline.model_dump()
     assert provider.calls[1][1]["request"] == request.model_dump()
+    assert provider.calls[2][1]["script"] == result.script.model_dump()
+    assert provider.calls[2][1]["request"] == request.model_dump()
 
 
 def test_planner_failure_prevents_writer_call_and_closes_provider(monkeypatch):
@@ -182,9 +186,10 @@ def test_workflow_timeout_closes_provider(monkeypatch):
     provider.close.assert_awaited_once()
 
 
-def test_real_gemini_sdk_serializes_schema_and_parses_mock_http_response(monkeypatch):
+@pytest.mark.parametrize("schema", [Outline, Assessment])
+def test_real_gemini_sdk_serializes_schema_and_parses_mock_http_response(monkeypatch, schema):
     """Exercise the installed SDK without credentials or an external network request."""
-    outline = asyncio.run(DemoProvider().generate("", {}, Outline)).value
+    outline = asyncio.run(DemoProvider().generate("", {}, schema)).value
     requests = []
 
     def respond(request):
@@ -218,7 +223,7 @@ def test_real_gemini_sdk_serializes_schema_and_parses_mock_http_response(monkeyp
     async def run():
         provider = GeminiProvider("test-key-not-a-real-secret", "test-model")
         try:
-            return await provider.generate("Planner instructions", {"request": REQUEST}, Outline)
+            return await provider.generate("Agent instructions", {"request": REQUEST}, schema)
         finally:
             await provider.close()
 
