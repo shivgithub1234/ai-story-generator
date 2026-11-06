@@ -47,6 +47,7 @@ class AppUser(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     issuer: Mapped[str] = mapped_column(String(500))
     subject: Mapped[str] = mapped_column(String(255))
+    usage_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -185,9 +186,15 @@ class StoryStore:
         limits = get_limits()
         # Clock time is read after acquiring the account lock, not at transaction start.
         checked_at = session.scalar(select(func.clock_timestamp()))
+        reset_at = session.scalar(select(AppUser.usage_reset_at).where(AppUser.id == self.owner_id))
+        since = (
+            max(checked_at - timedelta(hours=24), reset_at)
+            if reset_at
+            else checked_at - timedelta(hours=24)
+        )
         recent = (
             WorkflowRun.story_id.in_(self._owned_ids()),
-            WorkflowRun.started_at > checked_at - timedelta(hours=24),
+            WorkflowRun.started_at > since,
         )
         used = session.scalar(select(func.count()).select_from(WorkflowRun).where(*recent))
         active = session.scalar(
@@ -218,6 +225,18 @@ class StoryStore:
 
     def usage(self):
         with Session(self.engine) as session:
+            return self._usage(session)
+
+    def reset_usage(self):
+        """Administrative operation only; preserve history and active-job admission limits."""
+        with Session(self.engine) as session, session.begin():
+            owner = session.scalar(
+                select(AppUser).where(AppUser.id == self.owner_id).with_for_update()
+            )
+            if owner is None:
+                raise MissingStory()
+            owner.usage_reset_at = session.scalar(select(func.clock_timestamp()))
+            session.flush()
             return self._usage(session)
 
     def finish(self, run_id: str, result: GenerationResponse, *, lease_token=None):

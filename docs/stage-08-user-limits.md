@@ -47,3 +47,7 @@ The backend suite passed 126 tests using isolated PostgreSQL. Six frontend tests
 PostgreSQL tests cover simultaneous submissions competing for the last allowance/active slot, independent users, persistence across reconnection, failed requests, rolling-window expiry, duplicate regeneration, and rejected submissions leaving no empty project. Configuration and legacy-endpoint tests verify fail-closed behavior. Existing ownership and worker tests remain applicable.
 
 To try it without model costs, use demo mode on a separate test database, stop its worker, set the active-job limit to 1, submit once, and submit a second distinct story. The first should remain queued and the second should receive 429. Existing queued runs are not cancelled when a limit is lowered.
+
+## Administrative allowance reset (schema 4)
+
+`AppUser.usage_reset_at` lets an administrator reset one account's rolling usage without deleting stories, runs, or their timestamps. The usage window starts at the later of this timestamp and 24 hours ago. Active jobs still count, other accounts are unaffected, and later requests consume the normal allowance. `StoryStore.reset_usage()` takes the same account lock as admission, so a concurrent reset and request serialize. It is intentionally not exposed as a public API endpoint. Apply the additive schema-4 migration before deploying this code.

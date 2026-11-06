@@ -55,7 +55,7 @@ def ready():
             version = connection.execute(
                 text("SELECT max(version) FROM story_schema_version")
             ).scalar()
-            if version != 3:
+            if version != 4:
                 raise DatabaseConfigurationError("Schema migration required")
     except (SQLAlchemyError, DatabaseConfigurationError):
         return JSONResponse(
