@@ -40,7 +40,7 @@ A valid request returns HTTP 200 with normalized input. Invalid input returns HT
 
 Submit the same JSON to **`POST /api/stories/generate`** to run the Planner → Writer → Evaluator graph. The response includes the outline, script, readable text, evaluation, prompt version, timing, and token usage when available. By default, `is_demo` is true: the story and scores are fixed samples that ignore your preferences, not AI-generated results.
 
-The judge scores coherence, character consistency, repetition avoidance, language quality, and instruction adherence from 1–10, with scene evidence and revision suggestions. Python computes the average and flags scores below 7.0 with `needs_revision`. This flag does not trigger a rewrite yet. See the [Stage 3 walkthrough](docs/stage-03-evaluator.md).
+The judge scores coherence, character consistency, repetition avoidance, language quality, and instruction adherence from 1–10, with scene evidence and revision suggestions. Python computes the average and flags an average below 7.0 or any individual dimension below 4 with `needs_revision`. This flag does not trigger a rewrite yet. See the [Stage 3 walkthrough](docs/stage-03-evaluator.md).
 
 For live Gemini generation, copy `.env.example` to `.env` once and set `STORY_PROVIDER=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` locally. Use a model available in your account that supports structured JSON. Restart the server after configuration changes. See the [Stage 2 walkthrough](docs/stage-02-planner-writer.md) for setup and response explanations. Never commit your `.env` file.
 

@@ -5,6 +5,7 @@ from story_api.providers import GenerationError
 
 RUBRIC_VERSION = "story-quality-v1"
 REVISION_THRESHOLD = 7.0
+DIMENSION_THRESHOLD = 4
 DIMENSIONS = (
     "narrative_coherence",
     "character_consistency",
@@ -26,5 +27,9 @@ def build_report(assessment: Assessment, scene_count: int) -> EvaluationReport:
         assessment=assessment,
         overall_score=round(average, 2),
         revision_threshold=REVISION_THRESHOLD,
-        needs_revision=average < REVISION_THRESHOLD,
+        dimension_threshold=DIMENSION_THRESHOLD,
+        needs_revision=(
+            average < REVISION_THRESHOLD
+            or any(rating.score < DIMENSION_THRESHOLD for rating in ratings)
+        ),
     )

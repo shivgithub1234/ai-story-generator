@@ -60,6 +60,28 @@ def test_nonexistent_scene_reference_is_rejected():
         build_report(Assessment.model_validate(data), 3)
 
 
+@pytest.mark.parametrize("dimension", DIMENSIONS)
+@pytest.mark.parametrize("low_score, expected", [(3, True), (4, False)])
+def test_individual_dimension_floor_even_with_high_average(dimension, low_score, expected):
+    data = sample_assessment().model_dump()
+    for name in DIMENSIONS:
+        data[name]["score"] = 10
+    data[dimension]["score"] = low_score
+    report = build_report(Assessment.model_validate(data), 3)
+    assert report.overall_score >= 7
+    assert report.dimension_threshold == 4
+    assert report.needs_revision is expected
+
+
+def test_exact_average_seven_and_dimension_four_pass():
+    data = sample_assessment().model_dump()
+    for name, score in zip(DIMENSIONS, [4, 7, 8, 8, 8], strict=True):
+        data[name]["score"] = score
+    report = build_report(Assessment.model_validate(data), 3)
+    assert report.overall_score == 7
+    assert not report.needs_revision
+
+
 def test_failed_judge_returns_error_and_closes_provider(monkeypatch):
     class FailingJudge(DemoProvider):
         async def generate(self, instructions, payload, schema):

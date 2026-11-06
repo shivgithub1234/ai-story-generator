@@ -15,7 +15,7 @@ The dimensions are narrative coherence, character consistency, repetition avoida
 
 `generation_models.py` validates the assessment. Missing dimensions, fractional or out-of-range scores, and missing evidence are rejected. `evaluation.py` checks that cited scene numbers exist and computes the equally weighted average in Python. The model does not control its own overall score or threshold.
 
-An average below 7.0 sets `needs_revision: true`; exactly 7.0 does not. This is only a recommendation in Stage 3. No rewrite happens until Stage 4. A strong average can hide one weak dimension; the per-dimension ratings remain visible for review.
+An average below 7.0 OR any individual dimension below 4 sets `needs_revision: true`. Otherwise no revision is recommended. An average of exactly 7.0 and a minimum score of exactly 4 pass. This is only a recommendation in Stage 3. No rewrite happens until Stage 4. The individual score floor prevents a strong average from hiding a severely weak dimension.
 
 ## Try it
 

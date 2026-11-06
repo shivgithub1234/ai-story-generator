@@ -72,6 +72,7 @@ class EvaluationReport(BaseModel):
     assessment: Assessment
     overall_score: float
     revision_threshold: float
+    dimension_threshold: int
     needs_revision: bool
 
 
