@@ -1,0 +1,232 @@
+"""Short transactions: never hold a database transaction during model generation."""
+
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, select, update
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, Session, mapped_column
+
+from story_api.database import Base
+from story_api.generation_models import GenerationResponse
+from story_api.schemas import StoryRequest
+
+
+def now():
+    return datetime.now(UTC)
+
+
+class StoryProject(Base):
+    __tablename__ = "story_projects"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(String(300))
+    request: Mapped[dict] = mapped_column(JSONB)
+    edited_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WorkflowRun(Base):
+    __tablename__ = "workflow_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    story_id: Mapped[str] = mapped_column(ForeignKey("story_projects.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    output: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class StoryDraft(Base):
+    __tablename__ = "story_drafts"
+    __table_args__ = (UniqueConstraint("run_id", "revision_number"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
+    revision_number: Mapped[int] = mapped_column(Integer)
+    outline: Mapped[dict] = mapped_column(JSONB)
+    script: Mapped[dict] = mapped_column(JSONB)
+
+
+class Evaluation(Base):
+    __tablename__ = "evaluations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    draft_id: Mapped[str] = mapped_column(ForeignKey("story_drafts.id"), unique=True)
+    report: Mapped[dict] = mapped_column(JSONB)
+
+
+class MissingStory(Exception):
+    pass
+
+
+class EditConflict(Exception):
+    pass
+
+
+class RunExpired(Exception):
+    pass
+
+
+class StoryStore:
+    def __init__(self, engine):
+        self.engine = engine
+
+    def start(self, request: StoryRequest | None = None, story_id: str | None = None):
+        with Session(self.engine) as session, session.begin():
+            if story_id is None:
+                story_id = str(uuid4())
+                session.add(
+                    StoryProject(
+                        id=story_id,
+                        title=request.premise[:300],
+                        request=request.model_dump(),
+                    )
+                )
+                session.flush()
+            else:
+                story = session.get(StoryProject, story_id)
+                if story is None:
+                    raise MissingStory()
+                request = StoryRequest.model_validate(story.request)
+            run_id = str(uuid4())
+            session.add(
+                WorkflowRun(
+                    id=run_id,
+                    story_id=story_id,
+                    status="running",
+                    expires_at=now() + timedelta(minutes=10),
+                )
+            )
+        return story_id, run_id, request
+
+    def finish(self, run_id: str, result: GenerationResponse):
+        with Session(self.engine) as session, session.begin():
+            run = session.scalar(
+                select(WorkflowRun).where(WorkflowRun.id == run_id).with_for_update()
+            )
+            if run is None or run.status != "running" or run.expires_at <= now():
+                raise RunExpired()
+            output = result.model_copy(update={"run_id": run_id}).model_dump(mode="json")
+            drafts = [(result.initial_script, result.initial_evaluation)]
+            if result.revision_count:
+                drafts.append((result.script, result.evaluation))
+            for number, (script, report) in enumerate(drafts):
+                draft_id = str(uuid4())
+                session.add(
+                    StoryDraft(
+                        id=draft_id,
+                        run_id=run_id,
+                        revision_number=number,
+                        outline=result.outline.model_dump(),
+                        script=script.model_dump(),
+                    )
+                )
+                session.flush()
+                session.add(
+                    Evaluation(id=str(uuid4()), draft_id=draft_id, report=report.model_dump())
+                )
+            run.status = "completed"
+            run.completed_at = now()
+            run.output = output
+
+    def fail(self, run_id: str, code: str):
+        with Session(self.engine) as session, session.begin():
+            session.execute(
+                update(WorkflowRun)
+                .where(
+                    WorkflowRun.id == run_id,
+                    WorkflowRun.status == "running",
+                )
+                .values(status="failed", error_code=code, completed_at=now())
+            )
+
+    def _expire(self, session):
+        session.execute(
+            update(WorkflowRun)
+            .where(
+                WorkflowRun.status == "running",
+                WorkflowRun.expires_at < now(),
+            )
+            .values(status="failed", error_code="run_interrupted", completed_at=now())
+        )
+
+    @staticmethod
+    def _run(run, *, include_output=True):
+        data = {
+            "id": run.id,
+            "status": run.status,
+            "started_at": run.started_at,
+            "completed_at": run.completed_at,
+            "error_code": run.error_code,
+        }
+        if include_output:
+            data["output"] = run.output
+        return data
+
+    def get(self, story_id: str):
+        with Session(self.engine) as session, session.begin():
+            self._expire(session)
+            story = session.get(StoryProject, story_id)
+            if story is None:
+                raise MissingStory()
+            latest = session.scalar(
+                select(WorkflowRun)
+                .where(
+                    WorkflowRun.story_id == story_id,
+                )
+                .order_by(WorkflowRun.started_at.desc(), WorkflowRun.id.desc())
+                .limit(1)
+            )
+            return {
+                "id": story.id,
+                "title": story.title,
+                "request": story.request,
+                "created_at": story.created_at,
+                "version": story.version,
+                "edited_text": story.edited_text,
+                "edits_evaluated": False,
+                "latest_run": self._run(latest) if latest else None,
+            }
+
+    def runs(self, story_id: str, limit: int, offset: int):
+        with Session(self.engine) as session, session.begin():
+            self._expire(session)
+            if session.get(StoryProject, story_id) is None:
+                raise MissingStory()
+            runs = session.scalars(
+                select(WorkflowRun)
+                .where(WorkflowRun.story_id == story_id)
+                .order_by(WorkflowRun.started_at.desc(), WorkflowRun.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+            return [self._run(run) for run in runs]
+
+    def list(self, limit: int, offset: int):
+        with Session(self.engine) as session:
+            stories = session.scalars(
+                select(StoryProject)
+                .order_by(StoryProject.created_at.desc(), StoryProject.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+            return [
+                {"id": s.id, "title": s.title, "version": s.version, "created_at": s.created_at}
+                for s in stories
+            ]
+
+    def edit(self, story_id: str, expected_version: int, changes: dict):
+        with Session(self.engine) as session, session.begin():
+            if session.get(StoryProject, story_id) is None:
+                raise MissingStory()
+            updated = session.execute(
+                update(StoryProject)
+                .where(
+                    StoryProject.id == story_id,
+                    StoryProject.version == expected_version,
+                )
+                .values(**changes, version=expected_version + 1)
+            )
+            if updated.rowcount != 1:
+                raise EditConflict()
+        return self.get(story_id)

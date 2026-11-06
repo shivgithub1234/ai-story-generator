@@ -13,7 +13,7 @@ VALID_REQUEST = {
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": "0.4.0"}
+    assert response.json() == {"status": "ok", "version": "0.5.0"}
 
 
 def test_valid_request_normalizes_premise_and_supplies_defaults():
