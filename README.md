@@ -6,7 +6,7 @@ A portfolio project being built in working stages. The planned application turns
 
 ## Deployment preparation
 
-Container definitions, a Compose stack, production configuration checks, `/ready`, and GitHub Actions are prepared. See the [deployment runbook](docs/stage-08-deployment.md) for secrets, build/start commands, worker scaling, and rollback. Docker/Compose execution and hosted verification are still pending; this is not a public deployment.
+Container definitions, a Compose stack, production configuration checks, `/ready`, and GitHub Actions are prepared. See the [deployment runbook](docs/stage-08-deployment.md) for secrets, build/start commands, worker scaling, and rollback. Linux CI has verified Docker/Compose startup and a completed background demo job. Hosted verification is still pending; this is not a public deployment.
 
 ## Authentication setup
 
