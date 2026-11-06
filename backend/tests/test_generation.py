@@ -32,7 +32,15 @@ def test_demo_runs_both_agents_and_returns_readable_script():
     body = response.json()
     assert body["is_demo"] is True
     assert body["provider"] == "demo"
-    assert [step["step"] for step in body["usage"]] == ["planner", "writer", "evaluator"]
+    assert [step["step"] for step in body["usage"]] == [
+        "planner",
+        "writer",
+        "evaluator",
+        "revision",
+        "final_evaluator",
+    ]
+    assert body["revision_count"] == 1
+    assert body["stop_reason"] == "revision_limit_reached"
     assert body["evaluation"]["overall_score"] == 6.4
     assert body["evaluation"]["needs_revision"] is True
     assert len(body["script"]["scenes"]) == len(body["outline"]["scene_beats"]) == 3
@@ -70,11 +78,11 @@ def test_writer_receives_planner_output_and_original_preferences():
     provider = RecordingProvider()
     request = StoryRequest(**REQUEST, language="Hindi", tone="Suspenseful")
     result = asyncio.run(generate_story(request, provider))
-    assert len(provider.calls) == 3
+    assert len(provider.calls) == 5
     assert provider.calls[0][0] != provider.calls[1][0]
     assert provider.calls[1][1]["outline"] == result.outline.model_dump()
     assert provider.calls[1][1]["request"] == request.model_dump()
-    assert provider.calls[2][1]["script"] == result.script.model_dump()
+    assert provider.calls[2][1]["script"] == result.initial_script.model_dump()
     assert provider.calls[2][1]["request"] == request.model_dump()
 
 
