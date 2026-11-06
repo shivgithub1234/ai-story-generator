@@ -2,6 +2,7 @@ const uuid =
   "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 export function allowedRoute(path: string, method: string): boolean {
   if (path === "auth/me") return method === "GET";
+  if (path === "stories/usage") return method === "GET";
   if (path === "stories") return method === "GET" || method === "POST";
   if (new RegExp(`^stories/${uuid}$`).test(path))
     return method === "GET" || method === "PATCH";

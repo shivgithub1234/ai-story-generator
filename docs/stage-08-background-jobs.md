@@ -1,5 +1,7 @@
 # Stage 8 — Background jobs and progress tracking
 
+The subsequent [usage-limits checkpoint](stage-08-user-limits.md) adds admission limits and disables the unmetered `/generate` endpoint by default. The descriptions below record the background-jobs checkpoint.
+
 Previously, a saved-story request stayed open while Gemini planned, wrote, and evaluated the story. The API now saves a queued run and returns HTTP **202 Accepted** immediately. A separate Python worker reads the queue, generates the story, and saves the result. The browser polls the existing authenticated story endpoint and displays the current stage.
 
 ```mermaid

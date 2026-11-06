@@ -1,8 +1,10 @@
 """HTTP entry point; see the repository README for the development server command."""
 
 import asyncio
+import os
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -10,6 +12,7 @@ from story_api.auth import router as auth_router
 from story_api.auth import verified_identity
 from story_api.database import DatabaseConfigurationError
 from story_api.generation_models import GenerationResponse
+from story_api.limits import UsageConfigurationError, UsageLimitExceeded
 from story_api.providers import GenerationError, create_provider
 from story_api.saved_routes import router as saved_router
 from story_api.schemas import HealthResponse, StoryRequest, ValidationResponse
@@ -46,6 +49,14 @@ def validate_story_request(request: StoryRequest) -> ValidationResponse:
 )
 async def create_story(request: StoryRequest) -> GenerationResponse:
     """Generate synchronously within this HTTP request; results are not persisted."""
+    if os.getenv("STORY_ENABLE_UNMETERED_DEV_ENDPOINT", "false").lower() != "true":
+        raise HTTPException(
+            410,
+            detail={
+                "code": "use_saved_generation",
+                "message": "Use POST /api/stories for generation with usage limits and progress.",
+            },
+        )
     provider = None
     try:
         provider = create_provider()
@@ -80,6 +91,36 @@ async def storage_error_handler(request, exc):
             "Check database configuration and run the schema initializer.",
         )
     return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message}})
+
+
+@app.exception_handler(UsageLimitExceeded)
+async def usage_limit_handler(request, exc):
+    return JSONResponse(
+        status_code=429,
+        content=jsonable_encoder(
+            {
+                "detail": {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "usage": exc.usage,
+                }
+            }
+        ),
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@app.exception_handler(UsageConfigurationError)
+async def usage_config_handler(request, exc):
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": "usage_configuration_error",
+                "message": "Usage limits are not configured correctly.",
+            }
+        },
+    )
 
 
 for exception in (

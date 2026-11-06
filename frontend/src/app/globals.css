@@ -1340,3 +1340,13 @@ summary {
   text-decoration: underline;
   text-underline-offset: 4px;
 }
+.usage-panel {
+  border: 1px solid #d9ddd4;
+  border-radius: 12px;
+  padding: 12px 18px;
+  margin-bottom: 24px;
+  background: #f1f5ed;
+}
+.usage-panel p {
+  margin: 6px 0;
+}

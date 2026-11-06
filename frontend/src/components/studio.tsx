@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { sessionApi, ApiError } from "@/lib/api";
 import type { Story, StoryInput, StorySummary } from "@/lib/types";
 import StoryReader from "./story-reader";
+import UsagePanel from "./usage-panel";
 
 const prompts = [
   {
@@ -375,6 +376,10 @@ function Workspace() {
           <span className="private-label">◈ &nbsp; Private to you</span>
         </header>
         <div className="content-wrap">
+          <UsagePanel
+            request={request}
+            refreshKey={`${refresh}:${selected?.latest_run?.id}:${selected?.latest_run?.status}`}
+          />
           {error ? (
             <div className="error" role="alert">
               {error}

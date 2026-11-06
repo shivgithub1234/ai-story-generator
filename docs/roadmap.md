@@ -12,7 +12,8 @@ Each milestone should be runnable, verified, explained, and committed before adv
 | 6 | Clerk authentication and user ownership | Verified tokens; cross-user access denied; legacy stories protected |
 | 7 | Next.js interface | User can create, review, edit, and save a story |
 | 8a (implemented) | Background jobs and progress | Durable PostgreSQL queue, worker leases/recovery, bounded retries, refresh-safe dashboard |
-| 8b (next) | Reliability and delivery | Per-user usage limits, operational visibility, Docker, deployment and hosted verification |
+| 8b (implemented) | Per-user usage limits | Atomic rolling 24-hour allowances, active-job limits, personal usage display |
+| 8c (next) | Reliability and delivery | Operational visibility, Docker, deployment and hosted verification |
 | 9 (optional) | MCP tools, resources, and prompts | A client discovers and invokes shared application capabilities |
 
 Google Gemini is the selected live provider. Stage 2 includes an explicit offline fixture mode; live validation requires a locally configured key and model. Core generation, evaluation, and feedback-based regeneration take priority over persistence and UI. Evaluation scores are estimates, and any performance or cost claims must be measured.

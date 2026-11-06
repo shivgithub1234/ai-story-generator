@@ -6,6 +6,8 @@ import { errorMessage } from "../src/lib/api";
 test("proxy only permits supported story operations", () => {
   const id = "12345678-1234-1234-1234-123456789012";
   assert.equal(allowedRoute("stories", "POST"), true);
+  assert.equal(allowedRoute("stories/usage", "GET"), true);
+  assert.equal(allowedRoute("stories/usage", "POST"), false);
   assert.equal(allowedRoute(`stories/${id}/runs`, "POST"), true);
   for (const path of [
     "https://evil.invalid",

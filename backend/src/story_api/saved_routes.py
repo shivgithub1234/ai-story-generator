@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from starlette.concurrency import run_in_threadpool
 
@@ -51,6 +51,12 @@ async def save_new_story(request: StoryRequest, store: Store):
 @router.get("")
 def list_stories(store: Store, limit: PageSize = 20, offset: Offset = 0):
     return store.list(limit, offset)
+
+
+@router.get("/usage")
+def get_usage(store: Store, response: Response):
+    response.headers["Cache-Control"] = "private, no-store"
+    return store.usage()
 
 
 @router.get("/{story_id}")
