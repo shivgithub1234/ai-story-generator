@@ -85,7 +85,11 @@ For a live smoke test: sign in, create a short story, inspect feedback, save an 
 
 ## Verification checkpoint
 
-TypeScript checking, the four proxy tests, and the Next.js production build passed. Live HTTP checks returned 401 for missing/invalid bearer credentials and 404 for an unsupported path. The real Clerk sign-in/sign-up flow completed, and the personal workspace opened. The live create-story request reached the backend but failed because the Neon TCP connection timed out. The UI displayed the error and retained the brief. Authenticated generation, edit persistence, and browser-based user isolation remain unverified until database connectivity is restored.
+TypeScript checking, the four proxy tests, and the Next.js production build passed. Live HTTP checks returned 401 for missing/invalid bearer credentials and 404 for an unsupported path. The backend follow-up suite passed 97 tests, with 11 database integration tests skipped in this run; Stage 6 previously exercised isolation using a disposable PostgreSQL database.
+
+After restoring network connectivity to Neon, the real Clerk account generated "The Fallen Orb" through Gemini, received an average evaluation of 9.2/10, and saved the result. Browser checks confirmed all five feedback dimensions, saving the title and a separate manuscript copy, reopening that copy from the personal library, and history showing the completed run alongside earlier failed attempts. A second-account browser isolation check has not been performed.
+
+Live testing used `GEMINI_MODEL=gemini-3.1-flash-lite` in the ignored local environment. It also exposed a writer-schema compatibility issue: the nested dialogue array's `maxItems=60` caused Gemini to reject the request. The provider now expresses large array bounds in the schema description while retaining full Pydantic validation of every response. A regression test verifies that a response exceeding the original bound is still rejected. Missing-model and upstream deadline errors now have actionable messages, and a successful retry clears the frontend's stale error.
 
 ## Scope and next stage
 

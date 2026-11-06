@@ -25,6 +25,29 @@ from story_api.generation_models import (
 T = TypeVar("T", bound=BaseModel)
 
 
+def provider_schema(schema: type[BaseModel]) -> dict:
+    """Keep large array bounds out of Gemini's constrained-decoding grammar.
+
+    Nested maxItems=60 expands the writer grammar beyond provider limits. The
+    full Pydantic schema still validates every returned response before use.
+    """
+
+    def simplify(node):
+        if isinstance(node, list):
+            return [simplify(value) for value in node]
+        if not isinstance(node, dict):
+            return node
+        result = {key: simplify(value) for key, value in node.items()}
+        if result.get("type") == "array" and result.get("maxItems", 0) > 10:
+            maximum = result.pop("maxItems")
+            result["description"] = (
+                f"{result.get('description', '')} At most {maximum} items.".strip()
+            )
+        return result
+
+    return simplify(schema.model_json_schema())
+
+
 class GenerationError(Exception):
     def __init__(self, code: str, message: str, status: int = 502):
         super().__init__(message)
@@ -69,13 +92,25 @@ class GeminiProvider:
                 config=types.GenerateContentConfig(
                     system_instruction=instructions,
                     response_mime_type="application/json",
-                    response_json_schema=schema.model_json_schema(),
+                    response_json_schema=provider_schema(schema),
                     max_output_tokens=12000,
                 ),
             )
         except (httpx.TimeoutException, TimeoutError) as exc:
             raise GenerationError("provider_timeout", "Gemini timed out. Try again.", 504) from exc
         except errors.APIError as exc:
+            if exc.code == 504:
+                raise GenerationError(
+                    "provider_timeout",
+                    "Gemini exceeded its response deadline. Try again later.",
+                    504,
+                ) from exc
+            if exc.code == 404:
+                raise GenerationError(
+                    "provider_model_unavailable",
+                    "The configured Gemini model is unavailable. "
+                    "Choose an available model in GEMINI_MODEL.",
+                ) from exc
             if exc.code == 429:
                 raise GenerationError(
                     "provider_rate_limit",

@@ -640,6 +640,7 @@ function Workspace() {
               setBusy={setBusy}
               onDirtyChange={setDirty}
               onChange={(story) => {
+                setError("");
                 setSelected(story);
                 setRefresh((v) => v + 1);
               }}
